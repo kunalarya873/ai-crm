@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -468,3 +469,914 @@ class WebhookAccepted(BaseModel):
     id: str
     provider_event_id: str
     status: str
+
+
+class KnowledgeSourceCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_type: str = Field(min_length=1, max_length=50)
+    source_record_id: str = Field(min_length=1, max_length=200)
+    title: str = Field(min_length=1, max_length=300)
+    content: str = Field(default="", max_length=100000)
+    source_url: str | None = Field(default=None, max_length=1000)
+    owner_id: str | None = Field(default=None, max_length=100)
+    visibility: str = Field(default="tenant", max_length=30)
+    allowed_user_ids: list[str] = Field(default_factory=list, max_length=100)
+    customer_id: str | None = Field(default=None, max_length=100)
+    searchable: bool = True
+    ai_allowed: bool = True
+    sensitivity: str = Field(default="normal", max_length=30)
+    effective_at: datetime | None = None
+    fresh_until: datetime | None = None
+
+    @field_validator(
+        "source_type",
+        "source_record_id",
+        "title",
+        "visibility",
+        "sensitivity",
+    )
+    @classmethod
+    def strip_required_text(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("must not be blank")
+        return cleaned
+
+    @field_validator("content", "source_url", "owner_id", "customer_id")
+    @classmethod
+    def strip_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip()
+
+
+class KnowledgeSourceUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, min_length=1, max_length=300)
+    content: str | None = Field(default=None, max_length=100000)
+    source_url: str | None = Field(default=None, max_length=1000)
+    owner_id: str | None = Field(default=None, max_length=100)
+    visibility: str | None = Field(default=None, max_length=30)
+    allowed_user_ids: list[str] | None = Field(default=None, max_length=100)
+    customer_id: str | None = Field(default=None, max_length=100)
+    searchable: bool | None = None
+    ai_allowed: bool | None = None
+    sensitivity: str | None = Field(default=None, max_length=30)
+    effective_at: datetime | None = None
+    fresh_until: datetime | None = None
+    archived: bool | None = None
+
+    @field_validator("title", "visibility", "sensitivity")
+    @classmethod
+    def strip_optional_required_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("must not be blank")
+        return cleaned
+
+    @field_validator("content", "source_url", "owner_id", "customer_id")
+    @classmethod
+    def strip_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip()
+
+
+class KnowledgeSourceRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    tenant_id: str
+    source_type: str
+    source_record_id: str
+    title: str
+    content: str
+    source_url: str | None
+    owner_id: str | None
+    visibility: str
+    allowed_user_ids: list[str]
+    customer_id: str | None
+    status: str
+    searchable: bool
+    ai_allowed: bool
+    sensitivity: str
+    version: int
+    effective_at: datetime | None
+    fresh_until: datetime | None
+    source_updated_at: datetime | None
+    archived_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class KnowledgeIndexJobRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    tenant_id: str
+    source_id: str
+    source_version: int
+    status: str
+    attempts: int
+    lease_owner: str | None
+    lease_expires_at: datetime | None
+    started_at: datetime | None
+    finished_at: datetime | None
+    indexed_chunks: int
+    failure_code: str | None
+    failure_detail: str | None
+    created_at: datetime
+
+
+class KnowledgeSearchResult(BaseModel):
+    chunk_id: str
+    text: str
+    title: str
+    score: float
+    freshness: str
+    source_id: str
+    source_type: str
+    source_record_id: str
+    source_url: str | None
+    source_version: int
+    chunk_index: int
+    owner_id: str | None
+    effective_at: datetime | None
+    fresh_until: datetime | None
+    citation: dict[str, object]
+
+
+class KnowledgeSearchResponse(BaseModel):
+    query: str
+    items: list[KnowledgeSearchResult]
+    limit: int
+    offset: int
+    next_offset: int | None
+    insufficient_evidence: bool
+    evidence_reason: str | None
+
+
+class KnowledgeContextRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(default="", max_length=500)
+    customer_id: str | None = Field(default=None, max_length=100)
+    workflow_id: str | None = Field(default=None, max_length=100)
+    task_id: str | None = Field(default=None, max_length=100)
+    action_type: str | None = Field(default=None, max_length=100)
+    source_types: list[str] = Field(default_factory=list, max_length=20)
+    max_items: int = Field(default=8, ge=1, le=50)
+    max_chars: int = Field(default=12000, ge=100, le=50000)
+    include_stale: bool = False
+
+    @field_validator("query", "customer_id", "workflow_id", "task_id", "action_type")
+    @classmethod
+    def strip_context_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip()
+
+
+class KnowledgeContextItem(BaseModel):
+    chunk_id: str
+    text: str
+    title: str
+    score: float
+    freshness: str
+    citation: dict[str, object]
+
+
+class KnowledgeContextResponse(BaseModel):
+    assembly_id: str
+    query: str
+    items: list[KnowledgeContextItem]
+    used_chars: int
+    max_items: int
+    max_chars: int
+    truncated: bool
+    insufficient_evidence: bool
+
+
+class WorkItemCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    item_type: str = Field(default="task", min_length=1, max_length=30)
+    title: str = Field(min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=10000)
+    priority: int = Field(default=50, ge=0, le=100)
+    owner_id: str | None = Field(default=None, max_length=100)
+    assignee_id: str | None = Field(default=None, max_length=100)
+    team_key: str | None = Field(default=None, max_length=100)
+    contact_id: str | None = Field(default=None, max_length=36)
+    opportunity_id: str | None = Field(default=None, max_length=36)
+    due_at: datetime | None = None
+    timezone: str = Field(default="UTC", max_length=64)
+    depends_on_ids: list[str] = Field(default_factory=list, max_length=50)
+    source: str | None = Field(default=None, max_length=100)
+
+    @field_validator("item_type", "title", "timezone")
+    @classmethod
+    def strip_required_text(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("must not be blank")
+        return cleaned
+
+    @field_validator(
+        "description",
+        "owner_id",
+        "assignee_id",
+        "team_key",
+        "contact_id",
+        "opportunity_id",
+        "source",
+    )
+    @classmethod
+    def strip_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
+
+class WorkItemUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=10000)
+    priority: int | None = Field(default=None, ge=0, le=100)
+    owner_id: str | None = Field(default=None, max_length=100)
+    assignee_id: str | None = Field(default=None, max_length=100)
+    team_key: str | None = Field(default=None, max_length=100)
+    due_at: datetime | None = None
+    timezone: str | None = Field(default=None, max_length=64)
+    depends_on_ids: list[str] | None = Field(default=None, max_length=50)
+    source: str | None = Field(default=None, max_length=100)
+    archived: bool | None = None
+
+    @field_validator("title", "timezone")
+    @classmethod
+    def strip_optional_required_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("must not be blank")
+        return cleaned
+
+    @field_validator("description", "owner_id", "assignee_id", "team_key", "source")
+    @classmethod
+    def strip_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
+
+class WorkItemTransitionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    to_status: str = Field(min_length=1, max_length=30)
+    reason: str | None = Field(default=None, max_length=5000)
+    evidence: str | None = Field(default=None, max_length=10000)
+
+    @field_validator("to_status")
+    @classmethod
+    def strip_status(cls, value: str) -> str:
+        return value.strip()
+
+
+class WorkItemRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    tenant_id: str
+    item_type: str
+    title: str
+    description: str | None
+    status: str
+    priority: int
+    owner_id: str | None
+    assignee_id: str | None
+    team_key: str | None
+    contact_id: str | None
+    opportunity_id: str | None
+    due_at: datetime | None
+    timezone: str
+    depends_on_ids: list[str]
+    completion_evidence: str | None
+    blocked_reason: str | None
+    source: str | None
+    created_by: str
+    version: int
+    completed_at: datetime | None
+    archived_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ReminderCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reminder_kind: str = Field(min_length=1, max_length=50)
+    scheduled_for: datetime
+    timezone: str = Field(default="UTC", max_length=64)
+
+    @field_validator("reminder_kind", "timezone")
+    @classmethod
+    def strip_required_text(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("must not be blank")
+        return cleaned
+
+
+class ReminderRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    tenant_id: str
+    work_item_id: str
+    reminder_kind: str
+    scheduled_for: datetime
+    timezone: str
+    idempotency_key: str
+    status: str
+    attempts: int
+    delivered_at: datetime | None
+    acknowledged_at: datetime | None
+    last_error: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class JobCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    job_type: str = Field(min_length=1, max_length=100)
+    queue: str = Field(default="default", min_length=1, max_length=100)
+    priority: int = Field(default=50, ge=0, le=100)
+    payload: dict[str, object] = Field(default_factory=dict)
+    run_at: datetime | None = None
+    max_attempts: int = Field(default=3, ge=1, le=20)
+    backoff_seconds: int = Field(default=30, ge=0, le=3600)
+    timeout_seconds: int = Field(default=300, ge=1, le=86400)
+
+    @field_validator("job_type", "queue")
+    @classmethod
+    def strip_required_text(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("must not be blank")
+        return cleaned
+
+
+class JobRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    tenant_id: str
+    idempotency_key: str
+    request_hash: str
+    job_type: str
+    queue: str
+    priority: int
+    payload: dict[str, object]
+    status: str
+    run_at: datetime
+    max_attempts: int
+    attempts: int
+    backoff_seconds: int
+    timeout_seconds: int
+    next_attempt_at: datetime | None
+    lease_owner: str | None
+    lease_expires_at: datetime | None
+    heartbeat_at: datetime | None
+    timeout_at: datetime | None
+    started_at: datetime | None
+    completed_at: datetime | None
+    result: dict[str, object]
+    error_code: str | None
+    error_detail: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class JobClaimRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    worker_id: str = Field(min_length=1, max_length=100)
+    lease_seconds: int = Field(default=60, ge=1, le=3600)
+
+    @field_validator("worker_id")
+    @classmethod
+    def strip_worker_id(cls, value: str) -> str:
+        return value.strip()
+
+
+class JobCompleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    result: dict[str, object] = Field(default_factory=dict)
+
+
+class JobFailureRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    error_code: str = Field(min_length=1, max_length=100)
+    error_detail: str = Field(default="", max_length=500)
+    retryable: bool = True
+
+
+class WorkflowStart(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    workflow_key: str = Field(min_length=1, max_length=100)
+    owner_id: str | None = Field(default=None, max_length=100)
+    input_refs: dict[str, object] = Field(default_factory=dict)
+
+    @field_validator("workflow_key", "owner_id")
+    @classmethod
+    def strip_workflow_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip()
+
+
+class WorkflowAdvance(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    approved: bool | None = None
+    output: dict[str, object] = Field(default_factory=dict)
+    reason: str | None = Field(default=None, max_length=5000)
+
+
+class WorkflowRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    tenant_id: str
+    idempotency_key: str
+    workflow_key: str
+    status: str
+    owner_id: str | None
+    current_step: int
+    steps: list[str]
+    input_refs: dict[str, object]
+    outputs: dict[str, object]
+    waiting_for: str | None
+    error_code: str | None
+    error_detail: str | None
+    version: int
+    completed_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AIContextRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(default="", max_length=500)
+    customer_id: str | None = Field(default=None, max_length=100)
+    workflow_id: str | None = Field(default=None, max_length=100)
+    task_id: str | None = Field(default=None, max_length=100)
+    source_types: list[str] = Field(default_factory=list, max_length=20)
+    max_items: int = Field(default=8, ge=1, le=30)
+    max_chars: int = Field(default=12000, ge=100, le=30000)
+    include_stale: bool = False
+
+    @field_validator("query", "customer_id", "workflow_id", "task_id")
+    @classmethod
+    def strip_context_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip()
+
+
+class AISummaryRequest(AIContextRequest):
+    focus: str | None = Field(default=None, max_length=500)
+
+    @field_validator("focus")
+    @classmethod
+    def strip_focus(cls, value: str | None) -> str | None:
+        return value.strip() if value else None
+
+
+class AIExtractionRequest(AIContextRequest):
+    text: str | None = Field(default=None, max_length=10000)
+    fields: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("text")
+    @classmethod
+    def strip_extraction_text(cls, value: str | None) -> str | None:
+        return value.strip() if value else None
+
+    @field_validator("fields")
+    @classmethod
+    def validate_extraction_fields(cls, value: list[str]) -> list[str]:
+        cleaned = [item.strip() for item in value if item.strip()]
+        if len(cleaned) != len(set(cleaned)):
+            raise ValueError("fields must be unique")
+        return cleaned
+
+
+class AINextStepRequest(AIContextRequest):
+    goal: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("goal")
+    @classmethod
+    def strip_goal(cls, value: str | None) -> str | None:
+        return value.strip() if value else None
+
+
+class AICommunicationDraftRequest(AIContextRequest):
+    channel: Literal["email", "message", "call_script"] = "email"
+    purpose: str = Field(min_length=1, max_length=500)
+    recipient_name: str | None = Field(default=None, max_length=200)
+    tone: Literal["professional", "concise", "warm"] = "professional"
+
+    @field_validator("purpose", "recipient_name")
+    @classmethod
+    def strip_communication_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("must not be blank")
+        return cleaned
+
+
+class AIWorkflowPlanRequest(AIContextRequest):
+    objective: str = Field(min_length=1, max_length=1000)
+    allowed_action_types: list[str] = Field(
+        default_factory=lambda: ["create_work_item", "request_approval"],
+        max_length=10,
+    )
+
+    @field_validator("objective")
+    @classmethod
+    def strip_objective(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("must not be blank")
+        return cleaned
+
+    @field_validator("allowed_action_types")
+    @classmethod
+    def validate_allowed_action_types(cls, value: list[str]) -> list[str]:
+        cleaned = [item.strip() for item in value if item.strip()]
+        if len(cleaned) != len(set(cleaned)):
+            raise ValueError("allowed_action_types must be unique")
+        return cleaned
+
+
+class AIEvidenceReference(BaseModel):
+    reference_type: str
+    reference_id: str
+    citation: dict[str, object] = Field(default_factory=dict)
+
+
+class AIResponseMetadata(BaseModel):
+    run_id: str
+    status: Literal["succeeded", "fallback", "failed"]
+    provider_key: str
+    model_key: str
+    prompt_version: str
+    context_assembly_id: str | None
+    confidence: float = Field(ge=0, le=1)
+    uncertainty: list[str]
+    evidence: list[AIEvidenceReference]
+    insufficient_evidence: bool
+    fallback_reason: str | None
+
+
+class AICustomerSummaryResponse(AIResponseMetadata):
+    summary: str
+    key_points: list[str]
+
+
+class AIFieldExtractionResponse(AIResponseMetadata):
+    fields: dict[str, object]
+    missing_fields: list[str]
+
+
+class AINextStepResponse(AIResponseMetadata):
+    recommendation: str
+    rationale: str
+    priority: Literal["low", "normal", "high"]
+    proposed_work_item: dict[str, object] | None
+
+
+class AICommunicationDraftResponse(AIResponseMetadata):
+    channel: Literal["email", "message", "call_script"]
+    subject: str | None
+    body: str
+    draft_only: Literal[True] = True
+    requires_human_review: Literal[True] = True
+
+
+class AIWorkflowPlanStep(BaseModel):
+    step_key: str
+    title: str
+    rationale: str
+    requires_approval: Literal[True] = True
+
+
+class AIActionProposal(BaseModel):
+    action_type: Literal["create_work_item", "request_approval"]
+    parameters: dict[str, object]
+    requires_approval: Literal[True] = True
+
+
+class AIWorkflowPlanResponse(AIResponseMetadata):
+    objective: str
+    steps: list[AIWorkflowPlanStep]
+    proposed_actions: list[AIActionProposal]
+
+
+class AIRunRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    tenant_id: str
+    actor_id: str
+    idempotency_key: str
+    request_hash: str
+    use_case: str
+    provider_key: str
+    model_key: str
+    config_version: str
+    prompt_version: str
+    prompt_hash: str
+    feature_flag: str
+    context_assembly_id: str | None
+    context_refs: list[dict[str, object]]
+    request: dict[str, object]
+    status: str
+    validation_status: str
+    output: dict[str, object]
+    output_text: str | None
+    evidence_refs: list[dict[str, object]]
+    confidence: float | None
+    uncertainty: list[str]
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    provider_attempts: int
+    estimated_cost_micros: int
+    latency_ms: int | None
+    error_code: str | None
+    error_detail: str | None
+    fallback_reason: str | None
+    started_at: datetime
+    completed_at: datetime | None
+    created_at: datetime
+
+
+class AIFeedbackCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    feedback_type: Literal["accepted", "rejected", "edited", "corrected"]
+    edited_output: dict[str, object] | None = None
+    correction_note: str | None = Field(default=None, max_length=5000)
+
+    @model_validator(mode="after")
+    def validate_feedback(self) -> "AIFeedbackCreate":
+        if self.feedback_type in {"edited", "corrected"} and self.edited_output is None:
+            raise ValueError("edited_output is required for edited or corrected feedback")
+        return self
+
+
+class AIFeedbackRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    tenant_id: str
+    ai_run_id: str
+    actor_id: str
+    feedback_type: str
+    edited_output: dict[str, object] | None
+    correction_note: str | None
+    created_at: datetime
+
+
+class ActionProposalCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action_type: str = Field(min_length=1, max_length=100)
+    payload: dict[str, object] = Field(default_factory=dict)
+    evidence_refs: list[dict[str, object]] = Field(default_factory=list, max_length=50)
+    affected_resources: list[dict[str, object]] = Field(default_factory=list, max_length=50)
+    intended_changes: dict[str, object] = Field(default_factory=dict)
+    expected_side_effects: list[str] = Field(default_factory=list, max_length=20)
+    source_ai_run_id: str | None = Field(default=None, max_length=36)
+    expires_at: datetime | None = None
+
+    @field_validator("action_type")
+    @classmethod
+    def strip_action_type(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("must not be blank")
+        return cleaned
+
+
+class ActionProposalEdit(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    payload: dict[str, object]
+    evidence_refs: list[dict[str, object]] | None = Field(default=None, max_length=50)
+    affected_resources: list[dict[str, object]] | None = Field(default=None, max_length=50)
+    intended_changes: dict[str, object] | None = None
+    expected_side_effects: list[str] | None = Field(default=None, max_length=20)
+    expires_at: datetime | None = None
+
+
+class ActionDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str | None = Field(default=None, max_length=5000)
+
+
+class ActionRecoveryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operator_note: str | None = Field(default=None, max_length=5000)
+
+
+class ActionProposalRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    tenant_id: str
+    idempotency_key: str
+    request_hash: str
+    action_type: str
+    action_version: str
+    required_permission: str
+    risk_level: str
+    requires_approval: bool
+    status: str
+    payload: dict[str, object]
+    evidence_refs: list[dict[str, object]]
+    affected_resources: list[dict[str, object]]
+    intended_changes: dict[str, object]
+    expected_side_effects: list[str]
+    source_ai_run_id: str | None
+    requested_by: str
+    approved_by: str | None
+    rejected_by: str | None
+    approved_at: datetime | None
+    expires_at: datetime
+    decision_reason: str | None
+    last_error_code: str | None
+    last_error_detail: str | None
+    version: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class ActionExecutionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    tenant_id: str
+    action_proposal_id: str
+    idempotency_key: str
+    action_type: str
+    request_hash: str
+    status: str
+    attempts: int
+    result: dict[str, object]
+    provider_request_id: str | None
+    error_code: str | None
+    error_detail: str | None
+    operator_note: str | None
+    uncertain_outcome: bool
+    started_at: datetime
+    completed_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ActionRegistryRead(BaseModel):
+    action_type: str
+    version: str
+    required_permission: str
+    risk_level: str
+    requires_approval: bool
+    timeout_seconds: int
+    max_attempts: int
+    affected_resource_types: list[str]
+
+
+class ActionDryRunResponse(BaseModel):
+    action_type: str
+    action_version: str
+    required_permission: str
+    risk_level: str
+    requires_approval: bool
+    valid: bool
+    normalized_payload: dict[str, object]
+    affected_resources: list[dict[str, object]]
+    intended_changes: dict[str, object]
+    expected_side_effects: list[str]
+
+
+class MetricObservationRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    tenant_id: str
+    metric_key: str
+    value: float
+    unit: str
+    quality: str
+    dimensions: dict[str, object]
+    source_event_ids: list[str]
+    window_start: datetime
+    window_end: datetime
+    created_at: datetime
+
+
+class OperationalEventRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    tenant_id: str
+    actor_id: str
+    event_type: str
+    event_version: str
+    operation: str
+    resource_type: str
+    resource_id: str
+    outcome: str
+    correlation_id: str
+    payload: dict[str, object]
+    created_at: datetime
+
+
+class AlertRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    tenant_id: str
+    alert_type: str
+    rule_key: str
+    rule_version: str
+    dedup_key: str
+    severity: str
+    status: str
+    title: str
+    description: str
+    related_type: str | None
+    related_id: str | None
+    evidence: list[dict[str, object]]
+    work_item_id: str | None
+    acknowledged_by: str | None
+    acknowledged_at: datetime | None
+    resolved_by: str | None
+    resolved_at: datetime | None
+    resolution_note: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AlertDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    note: str | None = Field(default=None, max_length=5000)
+
+
+class MetricSummaryItem(BaseModel):
+    metric_key: str
+    value: float
+    unit: str
+    quality: str
+    dimensions: dict[str, object] = Field(default_factory=dict)
+
+
+class ObservabilitySummary(BaseModel):
+    window_start: datetime
+    window_end: datetime
+    metrics: list[MetricSummaryItem]
+    open_alerts: int
+    incomplete_metrics: list[str]
+
+
+class ProactiveCheckResponse(BaseModel):
+    checked_at: datetime
+    alerts_created: int
+    alerts_reopened: int
+    work_items_created: int
+    suppressed_duplicates: int
+    alert_ids: list[str]
+
+
+class AIProviderHealthRead(BaseModel):
+    provider_key: str
+    model_key: str
+    status: Literal["healthy", "unhealthy"]
+    detail: str

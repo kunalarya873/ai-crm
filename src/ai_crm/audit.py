@@ -1,8 +1,10 @@
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import AuditEvent, OutboxEvent
+from .models import AuditEvent, OperationalEvent, OutboxEvent
+from .observability.telemetry import redact_telemetry
 
 if TYPE_CHECKING:
     from .api.deps import RequestContext
@@ -19,6 +21,17 @@ async def record_audit(
     reason: str | None = None,
     details: dict[str, Any] | None = None,
 ) -> None:
+    dedup_key = f"{context.correlation_id}:{action}:{entity_type}:{entity_id}:{outcome}"
+    safe_details = redact_telemetry(details or {})
+    if not isinstance(safe_details, dict):
+        safe_details = {}
+    existing_event = await session.scalar(
+        select(OperationalEvent).where(
+            OperationalEvent.tenant_id == context.tenant_id,
+            OperationalEvent.event_type == action,
+            OperationalEvent.dedup_key == dedup_key,
+        )
+    )
     session.add(
         AuditEvent(
             tenant_id=context.tenant_id,
@@ -29,9 +42,24 @@ async def record_audit(
             outcome=outcome,
             reason=reason,
             correlation_id=context.correlation_id,
-            details=details or {},
+            details=safe_details,
         )
     )
+    if existing_event is None:
+        session.add(
+            OperationalEvent(
+                tenant_id=context.tenant_id,
+                actor_id=context.actor_id,
+                event_type=action,
+                operation=action,
+                resource_type=entity_type,
+                resource_id=entity_id,
+                outcome=outcome,
+                correlation_id=context.correlation_id,
+                dedup_key=dedup_key,
+                payload=safe_details,
+            )
+        )
 
 
 async def record_outbox_event(

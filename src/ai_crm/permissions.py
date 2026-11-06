@@ -20,6 +20,26 @@ class Permission(StrEnum):
     INTEGRATIONS_MANAGE = "integrations:manage"
     INTEGRATIONS_SYNC = "integrations:sync"
     INTEGRATIONS_WRITE = "integrations:write"
+    KNOWLEDGE_READ = "knowledge:read"
+    KNOWLEDGE_MANAGE = "knowledge:manage"
+    KNOWLEDGE_CONTEXT = "knowledge:context"
+    KNOWLEDGE_SENSITIVE = "knowledge:sensitive"
+    WORK_READ = "work:read"
+    WORK_MANAGE = "work:manage"
+    JOBS_READ = "jobs:read"
+    JOBS_MANAGE = "jobs:manage"
+    WORKFLOWS_READ = "workflows:read"
+    WORKFLOWS_MANAGE = "workflows:manage"
+    AI_READ = "ai:read"
+    AI_USE = "ai:use"
+    AI_FEEDBACK = "ai:feedback"
+    ACTIONS_READ = "actions:read"
+    ACTIONS_PROPOSE = "actions:propose"
+    ACTIONS_APPROVE = "actions:approve"
+    ACTIONS_EXECUTE = "actions:execute"
+    ACTIONS_RECOVER = "actions:recover"
+    OBSERVABILITY_READ = "observability:read"
+    OBSERVABILITY_MANAGE = "observability:manage"
 
 
 ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
@@ -34,6 +54,15 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
             Permission.ACTIVITIES_READ,
             Permission.TASKS_READ,
             Permission.INTEGRATIONS_READ,
+            Permission.KNOWLEDGE_READ,
+            Permission.KNOWLEDGE_CONTEXT,
+            Permission.WORK_READ,
+            Permission.JOBS_READ,
+            Permission.WORKFLOWS_READ,
+            Permission.AI_READ,
+            Permission.AI_USE,
+            Permission.ACTIONS_READ,
+            Permission.OBSERVABILITY_READ,
         }
     ),
 }

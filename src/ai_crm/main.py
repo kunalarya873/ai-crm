@@ -6,8 +6,13 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
+from .api.action_routes import router as action_router
+from .api.ai_routes import router as ai_router
 from .api.integration_routes import router as integration_router
+from .api.knowledge_routes import router as knowledge_router
+from .api.observability_routes import router as observability_router
 from .api.routes import router
+from .api.work_routes import router as work_router
 from .config import settings
 from .db import close_database, create_tables, seed_local_identity
 from .domain import (
@@ -40,6 +45,11 @@ app = FastAPI(
 )
 app.include_router(router, prefix=settings.api_v1_prefix)
 app.include_router(integration_router, prefix=settings.api_v1_prefix)
+app.include_router(ai_router, prefix=settings.api_v1_prefix)
+app.include_router(action_router, prefix=settings.api_v1_prefix)
+app.include_router(knowledge_router, prefix=settings.api_v1_prefix)
+app.include_router(work_router, prefix=settings.api_v1_prefix)
+app.include_router(observability_router, prefix=settings.api_v1_prefix)
 
 
 @app.middleware("http")

@@ -1,0 +1,37 @@
+{
+  "customer_summary": {
+    "version": "v1",
+    "catalog_version": "phase6-v1",
+    "template": "Summarise the authorised customer context. Separate known facts from uncertainty and cite every material point.",
+    "output_schema_version": "customer-summary-v1",
+    "policy_version": "safe-grounded-v1"
+  },
+  "field_extraction": {
+    "version": "v1",
+    "catalog_version": "phase6-v1",
+    "template": "Extract only the requested fields from the supplied authorised text. Use null for missing values and never infer unsupported facts.",
+    "output_schema_version": "field-extraction-v1",
+    "policy_version": "safe-grounded-v1"
+  },
+  "next_step_recommendation": {
+    "version": "v1",
+    "catalog_version": "phase6-v1",
+    "template": "Recommend one reviewable next step grounded in authorised customer context. Do not execute or imply that an action was executed.",
+    "output_schema_version": "next-step-v1",
+    "policy_version": "safe-grounded-v1"
+  },
+  "communication_draft": {
+    "version": "v1",
+    "catalog_version": "phase6-v1",
+    "template": "Draft a communication using only authorised context. Produce a draft for human review and do not send it.",
+    "output_schema_version": "communication-draft-v1",
+    "policy_version": "safe-grounded-v1"
+  },
+  "workflow_plan": {
+    "version": "v1",
+    "catalog_version": "phase6-v1",
+    "template": "Propose a bounded workflow plan from authorised context. Every proposed action must remain typed, approval-gated, and unexecuted.",
+    "output_schema_version": "workflow-plan-v1",
+    "policy_version": "safe-grounded-v1"
+  }
+}

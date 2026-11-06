@@ -131,6 +131,12 @@ class FixtureConnector:
                 "unsupported_operation",
                 "Fixture operation is not supported",
             )
+        configured_failure = connection.configuration.get("write_failure")
+        if configured_failure in {"timeout", "uncertain", "rate_limit"}:
+            raise ConnectorProviderError(
+                str(configured_failure),
+                f"Fixture configured to simulate {configured_failure}",
+            )
         return ExternalWriteResult(
             provider_request_id=f"fixture-request-{idempotency_key}",
             response_metadata={

@@ -238,7 +238,11 @@ async def update_contact(
         action="contact.updated",
         entity_type="contact",
         entity_id=contact_id,
-        details={"old": old_state, "new": changes, "version": expected + 1},
+        details={
+            "old": json_safe(old_state),
+            "new": json_safe(changes),
+            "version": expected + 1,
+        },
     )
     await record_outbox_event(
         session=session,
@@ -246,7 +250,11 @@ async def update_contact(
         event_type="contact.updated",
         aggregate_type="contact",
         aggregate_id=contact_id,
-        payload={"old": old_state, "new": changes, "version": expected + 1},
+        payload={
+            "old": json_safe(old_state),
+            "new": json_safe(changes),
+            "version": expected + 1,
+        },
     )
     await session.commit()
     await session.refresh(contact)
