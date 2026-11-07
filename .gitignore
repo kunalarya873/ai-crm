@@ -10,3 +10,4 @@ htmlcov/
 *.sqlite
 *.sqlite3
 .agents/
+.claude/
