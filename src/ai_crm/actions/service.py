@@ -17,6 +17,7 @@ from ..domain import (
     InvalidRequestError,
     InvalidTransitionError,
     NotFoundError,
+    SeparationOfDutiesError,
     VersionConflictError,
 )
 from ..integrations import (
@@ -168,6 +169,15 @@ def _resource_refs(action_type: str, payload: dict[str, object]) -> list[dict[st
     return list({json.dumps(item, sort_keys=True): item for item in refs}.values())
 
 
+def describe_proposal(
+    action_type: str, payload: dict[str, object]
+) -> tuple[list[dict[str, object]], str]:
+    """Affected-resource refs and request hash a proposal of this shape would get."""
+    definition = get_action_definition(action_type)
+    normalized = definition.validate(payload).model_dump(mode="json", exclude_unset=True)
+    return _resource_refs(action_type, normalized), _hash_payload(action_type, normalized)
+
+
 def _side_effects(definition: ActionDefinition, supplied: list[str]) -> list[str]:
     return supplied or list(definition.expected_side_effects)
 
@@ -198,6 +208,8 @@ async def create_proposal(
     context: RequestContext,
     payload: ActionProposalCreate,
     idempotency_key: str,
+    *,
+    commit: bool = True,
 ) -> ActionProposal:
     _require_permission(context, Permission.ACTIONS_PROPOSE)
     if not idempotency_key.strip():
@@ -257,8 +269,9 @@ async def create_proposal(
         proposal.id,
         {"action_type": proposal.action_type, "status": proposal.status},
     )
-    await session.commit()
-    await session.refresh(proposal)
+    if commit:
+        await session.commit()
+        await session.refresh(proposal)
     return proposal
 
 
@@ -316,6 +329,20 @@ async def approve_proposal(
     _ensure_not_expired(proposal)
     if proposal.status not in {"proposed", "edited"}:
         raise InvalidTransitionError(f"Cannot approve proposal in state {proposal.status}")
+    if context.actor_id in {proposal.requested_by, proposal.last_edited_by}:
+        await record_audit(
+            session,
+            context,
+            "action.proposal.approve",
+            "action_proposal",
+            proposal.id,
+            outcome="denied",
+            reason="self_approval",
+        )
+        await session.commit()
+        raise SeparationOfDutiesError(
+            "Proposals cannot be approved by their requester or last editor"
+        )
     definition = get_action_definition(proposal.action_type)
     _require_permission(context, definition.required_permission)
     definition.validate(proposal.payload)
@@ -382,6 +409,7 @@ async def edit_proposal(
     if payload.expires_at is not None:
         proposal.expires_at = _expiry(payload.expires_at)
     proposal.status = "edited"
+    proposal.last_edited_by = context.actor_id
     proposal.approved_by = None
     proposal.approved_at = None
     proposal.decision_reason = None

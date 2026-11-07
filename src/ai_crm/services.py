@@ -22,6 +22,7 @@ from .domain import (
     validate_transition,
 )
 from .models import Activity, Company, Contact, Opportunity, Task
+from .pagination import page_statement
 from .schemas import (
     ActivityCreate,
     CompanyCreate,
@@ -158,6 +159,7 @@ async def list_contacts(
     contact_status: str | None = None,
     query: str | None = None,
     archived: bool = False,
+    cursor: str | None = None,
 ) -> Sequence[Contact]:
     statement = select(Contact).where(Contact.tenant_id == context.tenant_id)
     if company_id is not None:
@@ -175,9 +177,7 @@ async def list_contacts(
             | Contact.last_name.ilike(pattern)
             | Contact.email.ilike(pattern)
         )
-    result = await session.scalars(
-        statement.order_by(Contact.created_at.desc()).offset(offset).limit(limit)
-    )
+    result = await session.scalars(page_statement(statement, Contact, limit, offset, cursor))
     return result.all()
 
 
@@ -308,14 +308,13 @@ async def list_companies(
     context: RequestContext,
     limit: int,
     offset: int,
+    *,
+    cursor: str | None = None,
 ) -> Sequence[Company]:
-    result = await session.scalars(
-        select(Company)
-        .where(Company.tenant_id == context.tenant_id, Company.archived_at.is_(None))
-        .order_by(Company.created_at.desc())
-        .offset(offset)
-        .limit(limit)
+    statement = select(Company).where(
+        Company.tenant_id == context.tenant_id, Company.archived_at.is_(None)
     )
+    result = await session.scalars(page_statement(statement, Company, limit, offset, cursor))
     return result.all()
 
 
@@ -423,6 +422,7 @@ async def list_opportunities(
     owner_id: str | None = None,
     company_id: str | None = None,
     opportunity_status: str | None = None,
+    cursor: str | None = None,
 ) -> Sequence[Opportunity]:
     statement = select(Opportunity).where(
         Opportunity.tenant_id == context.tenant_id,
@@ -436,9 +436,7 @@ async def list_opportunities(
         statement = statement.where(Opportunity.company_id == company_id)
     if opportunity_status:
         statement = statement.where(Opportunity.status == opportunity_status)
-    result = await session.scalars(
-        statement.order_by(Opportunity.created_at.desc()).offset(offset).limit(limit)
-    )
+    result = await session.scalars(page_statement(statement, Opportunity, limit, offset, cursor))
     return result.all()
 
 
@@ -621,6 +619,7 @@ async def list_tasks(
     contact_id: str | None = None,
     opportunity_id: str | None = None,
     overdue: bool = False,
+    cursor: str | None = None,
 ) -> Sequence[Task]:
     statement = select(Task).where(
         Task.tenant_id == context.tenant_id,
@@ -639,9 +638,7 @@ async def list_tasks(
             Task.due_at < utc_now(),
             Task.status.notin_(["completed", "cancelled"]),
         )
-    result = await session.scalars(
-        statement.order_by(Task.created_at.desc()).offset(offset).limit(limit)
-    )
+    result = await session.scalars(page_statement(statement, Task, limit, offset, cursor))
     return result.all()
 
 

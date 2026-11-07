@@ -2,13 +2,13 @@
 
 This is the runnable backend for the AI-first CRM and business automation platform described in `Target.md`.
 
-## Current implementation: Backend Phases 1, 2, 3A, 4, 5A, 6A, 7A, and 8A
+## Current implementation: Backend Phases 1, 2, 3A, 4, 5A, 6A, 7A, 8A, 9A, 9B, and 10A (kill switches)
 
 The backend currently implements the runtime/security foundation, core CRM vertical slice, provider-neutral integration foundation, permission-aware knowledge retrieval, durable work execution, grounded AI requests, approval-gated action execution, and operational measurement:
 
 - FastAPI application with versioned routes under `/api/v1`.
 - SQLite with async SQLAlchemy for local development and a configurable database URL.
-- Alembic migrations for the Phase 1 through Phase 8A schemas.
+- Alembic migrations for the Phase 1 through Phase 10A schemas.
 - Tenant-scoped organisations, users, memberships, companies, contacts, opportunities, activities, and tasks.
 - Signed JWT bearer authentication for local development.
 - Role-based permissions for CRM reads, creates, and updates.
@@ -66,6 +66,12 @@ Run the API:
 ```bash
 uv run uvicorn ai_crm.main:app --app-dir src --reload
 ```
+
+Outside `DEBUG=true`, startup fails unless `AUTH_SECRET_KEY` is set to a non-default value of at least 32 characters (see `.env.example`).
+
+Set `WORKER_ENABLED=true` to run the in-process worker, which executes `integration.sync`, `integration.webhook` and `knowledge.index` jobs, runs proactive checks every `PROACTIVE_CHECK_INTERVAL_SECONDS`, and enqueues one incremental sync per healthy connection every `INTEGRATION_SYNC_INTERVAL_SECONDS`. Accepted webhooks enqueue an `integration.webhook` job that triggers an incremental sync (the payload is only a hint, never trusted as record data); transient provider failures retry with backoff that grows across consecutive failed syncs, while permanent ones fail once and pause scheduled syncs for that connection until a manual sync succeeds. Revoked connections are terminal. It is off by default and meant for a single process; job types it has no handler for, including `reminder.dispatch` until a real delivery channel exists, are left queued for external workers. A webhook for a revoked or disconnected connection is rejected with 409.
+
+List endpoints for contacts, companies, opportunities and tasks accept `limit` plus either `offset` or an opaque `cursor`. When a full page is returned, the `X-Next-Cursor` response header carries the cursor for the next page (use it instead of `offset`; combining both is a 422). Results are ordered newest-first with `id` as tiebreak, so cursor pages stay stable while records are created.
 
 The API will be available at `http://127.0.0.1:8000`. OpenAPI documentation is available at `/docs`.
 
@@ -143,6 +149,7 @@ Phase 3A integration endpoints include:
 ```text
 POST/GET /integrations/connections
 POST     /integrations/connections/{connection_id}/test
+POST     /integrations/connections/{connection_id}/refresh
 POST     /integrations/connections/{connection_id}/disconnect
 POST     /integrations/connections/{connection_id}/revoke
 POST     /integrations/connections/{connection_id}/sync
@@ -239,7 +246,27 @@ POST /actions/executions/{execution_id}/retry
 POST /actions/executions/{execution_id}/reconcile
 ```
 
+Roles: `admin` has every permission; `manager` can approve, recover, write to integrations and see sensitive knowledge; `member` can read/write CRM data and propose/execute actions but not approve; `viewer` is read-only. A proposal cannot be approved by its requester or last editor (403 `separation_of_duties`, audited as denied).
+
 The initial registry supports `task.create`, `contact.update`, `contact.assign_owner`, `activity.create`, `approval.request`, and fixture-backed `integration.activity.create`. Proposals remain separate from effects; external uncertain outcomes must be reconciled before retry.
+
+Member administration endpoints (admin to manage, admin and manager to read):
+
+```text
+GET   /admin/members
+POST  /admin/members            # add an existing user by email with a role
+PATCH /admin/members/{membership_id}   # If-Match; change role or is_active
+```
+
+A tenant must keep at least one active admin; deactivated members lose access on their next request. With `SEED_DEMO_DATA=true`, `demo-tenant` has `demo-user` (admin) and `demo-manager` (manager), so one can propose an action and the other approve it:
+
+```bash
+MANAGER_TOKEN=$(uv run python -c 'from ai_crm.auth import create_access_token; print(create_access_token("demo-manager"))')
+```
+
+A permanent token-refresh failure marks a connection `needs_reauth`, which pauses syncs and writes and raises a proactive alert; a successful `test` or `refresh` restores it. The worker refreshes expired tokens before scheduling a sync.
+
+Every response carries a W3C `traceparent` header. A valid inbound `traceparent` is continued (an invalid one is ignored and a new trace starts); the trace id is stored on operational events and durable jobs, so the worker's events for a job — including a webhook-triggered sync — share the originating request's trace. Query it with `GET /observability/events?trace_id=<32-hex>`. Provider adapters are not yet passed the trace id.
 
 Phase 8A observability endpoints include:
 
@@ -257,6 +284,49 @@ POST /observability/proactive-checks/run
 
 Proactive checks create escalation work items for human review and suppress duplicate active alerts using transparent rule keys; they do not execute consequential actions automatically.
 
+Phase 9A multi-agent coordination (registry, runs, delegation, human escalation) endpoints:
+
+```text
+GET/POST      /agents                     register (admin only) and list agents
+GET/PATCH     /agents/{agent_id}          If-Match; status active|suspended|retired
+POST/GET      /agent-runs                 start (Idempotency-Key) and list runs
+GET           /agent-runs/{run_id}        run with its steps
+POST          /agent-runs/{run_id}/steps  submit one step: retrieve|propose|delegate|escalate|output
+POST          /agent-runs/{run_id}/pause|resume|cancel   If-Match
+GET           /agent-runs/{run_id}/messages              persisted inter-agent messages
+```
+
+Agents are registered with an owner, version, capabilities (`read`, `propose`, `delegate`, `escalate`), a list of action types from the central action registry, a risk ceiling, a sensitive-data scope and token, step, side-effect, depth and fan-out limits (platform caps are set with the `AGENT_*` settings). There is no model loop yet: the run owner submits each step over the API, so runs are deterministic and replayable, and a model driver can plug in later. A step can only use existing paths: `retrieve` is permission-aware context assembly, and `propose` creates an ordinary action proposal that a human with `actions:approve` must approve (agents can never approve, execute or recover, and the run owner cannot approve their own agent's proposal). An agent's effective permissions are its owner's permissions narrowed to its capabilities, so it can never exceed its owner. Tokens are reported by the caller.
+
+Delegation needs a reason, a target agent, an expected result, a deadline and a budget, and is rejected for cycles, depth, fan-out, duplicate ownership of an objective, a deadline past the parent's, or a budget above what the parent has left (the child budget is carved out of the parent's). Repeated failures of a target agent escalate instead of delegating again. Policy denials, conflicting proposals from two runs, budget exhaustion, repeated failures and missed deadlines create an `escalation` work item with the evidence and put the run in `waiting_human`; resuming needs that work item to be `completed`. The worker fails runs that pass their deadline, so a crashed driver cannot strand a run. 
+Phase 9B coordination evaluation (admin runs it; anyone with `agents:read` can read results):
+
+```text
+GET  /agent-evals/scenarios
+POST /agent-evals/run          {"scenario_key": optional, "replay_key": "..."}
+GET  /agent-evals/results
+GET  /agent-evals/compare?scenario_key=...&replay_key=...
+```
+
+Five fixed, replayable scenarios (`parallel_research`, `partial_failure`, `conflicting_data`, `duplicate_work`, `budget_pressure`) are scripted and replayed through the real coordination services as a single agent and as a delegating multi-agent team; the harness only creates proposals and never approves or executes. Each comparison reports task success, duplicate work, handoff latency, failed tool calls, human interventions, steps, tokens and cost (`AGENT_COST_PER_1K_TOKENS_MICROS`). Treat the results with care: no model is involved, so they measure the coordination machinery, not model quality; the human-baseline minutes and interventions are declared assumptions and are labelled as such in every response. On the current scenarios coordination costs extra steps and tokens (it is overhead on the clean path) and wins only on cross-run conflict detection; a single run does not flag two conflicting proposals of its own. Replaying the same `replay_key` returns the stored result.
+
+### Operating the kill switches (Phase 10A)
+
+Four capabilities can be switched off without a deploy: `ai`, `workflows`, `connectors` and `agents`. Each is on by default.
+
+```text
+GET /admin/feature-flags                      admin and manager
+PUT /admin/feature-flags/{flag}               admin only; body {"enabled": false, "reason": "..."}
+```
+
+- **Disable one tenant:** `PUT` with `If-Match: "<version>"` (use `"0"` the first time; the response `ETag` is the next version). A reason is required when disabling. Every change is audited (`capability.disabled` / `capability.enabled`).
+- **Disable every tenant:** set `DISABLED_CAPABILITIES=ai,agents` (comma-separated) and restart. A platform switch wins over a tenant flag and shows as `source: platform`.
+- **What stops:** new work only. A blocked call returns `503` with code `capability_disabled` and writes a `capability.blocked` audit row. `ai` blocks every generating AI route; `workflows` blocks start/advance/resume; `connectors` blocks sync, test, refresh, external writes and incoming webhooks (so the provider retries) and keeps `integration.*` jobs queued instead of failing them; `agents` blocks starting runs, steps, resuming and evaluation runs.
+- **What keeps working:** reads, AI feedback, disconnecting or revoking a connection, and pausing or cancelling agent runs, so a switched-off capability can always be wound down.
+- **Re-enable:** `PUT` with `"enabled": true` and the current version, or remove the platform entry and restart. Queued connector jobs then run on the next worker tick.
+
+This is the kill-switch part of Phase 10 only. SLOs, load and capacity evidence, retention and export, admin usage views and full runbooks are not built.
+
 ## Checks
 
 Run the project checks from this directory:
@@ -271,4 +341,4 @@ uv run --with pyright pyright
 
 ## Next backend slice
 
-The next implementation is Backend Phase 9: multi-agent coordination. See `modules/backend/phase-09-multi-agent-coordination.md`.
+Backend Phase 9 is implemented and Phase 10 has its first slice (kill switches). The rest of Backend Phase 10 (SLOs, capacity evidence, retention and export, admin views, runbooks, CI) is next. See `modules/backend/phase-10-scale-and-production-operations.md`.

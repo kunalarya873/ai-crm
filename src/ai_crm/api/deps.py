@@ -21,6 +21,7 @@ class RequestContext:
     role: str
     correlation_id: str
     permissions: frozenset[Permission]
+    trace_id: str | None = None
 
 
 async def get_request_context(
@@ -81,6 +82,7 @@ async def get_request_context(
         actor_id=actor_id,
         role=membership.role,
         correlation_id=request.state.correlation_id,
+        trace_id=getattr(request.state, "trace_id", None),
         permissions=permissions_for_role(membership.role),
     )
 

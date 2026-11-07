@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .api.deps import RequestContext
@@ -15,8 +16,10 @@ from .domain import (
     ConflictError,
     DomainError,
     InvalidRequestError,
+    InvalidTransitionError,
     NotFoundError,
 )
+from .flags import require_capability, system_context
 from .models import (
     Activity,
     ExternalWrite,
@@ -27,10 +30,14 @@ from .models import (
     WebhookEvent,
     utc_now,
 )
+from .permissions import Permission
 from .schemas import (
     ExternalWriteCreate,
     IntegrationConnectionCreate,
 )
+
+SYNC_RETRY_BASE_SECONDS = 30
+TRANSIENT_PROVIDER_CODES = frozenset({"timeout", "rate_limit", "provider_unavailable"})
 
 
 class WebhookSignatureError(DomainError):
@@ -71,6 +78,8 @@ class Connector(Protocol):
 
     async def test(self, connection: IntegrationConnection) -> None: ...
 
+    async def refresh(self, connection: IntegrationConnection) -> datetime | None: ...
+
     async def list_activities(
         self,
         connection: IntegrationConnection,
@@ -94,6 +103,12 @@ class FixtureConnector:
     async def test(self, connection: IntegrationConnection) -> None:
         if not connection.external_account_id:
             raise ConnectorProviderError("invalid_account", "Fixture account is missing")
+
+    async def refresh(self, connection: IntegrationConnection) -> datetime | None:
+        failure = connection.configuration.get("refresh_failure")
+        if failure:
+            raise ConnectorProviderError(str(failure), "Fixture configured to fail token refresh")
+        return utc_now() + timedelta(hours=1)
 
     async def list_activities(
         self,
@@ -153,6 +168,9 @@ class FixtureConnector:
 
 
 CONNECTORS: dict[str, Connector] = {"fixture": FixtureConnector()}
+
+
+MAX_WEBHOOK_EVENT_ID_LENGTH = 100
 
 
 def get_connector(provider_key: str) -> Connector:
@@ -252,7 +270,10 @@ async def test_connection(
     context: RequestContext,
     connection_id: str,
 ) -> IntegrationConnection:
+    await require_capability(session, context, "connectors", operation="connector.test")
     connection = await get_connection(session, context, connection_id)
+    if connection.status == "revoked":
+        raise InvalidTransitionError("A revoked connection cannot be tested or reconnected")
     connector = get_connector(connection.provider_key)
     await connector.test(connection)
     connection.status = "connected"
@@ -262,6 +283,74 @@ async def test_connection(
         session,
         context,
         "integration.connection.tested",
+        "integration_connection",
+        connection.id,
+    )
+    await session.commit()
+    await session.refresh(connection)
+    return connection
+
+
+async def refresh_connection(
+    session: AsyncSession,
+    context: RequestContext,
+    connection_id: str,
+) -> IntegrationConnection:
+    await require_capability(session, context, "connectors", operation="connector.refresh")
+    connection = await get_connection(session, context, connection_id)
+    if connection.status not in {"connected", "needs_reauth"}:
+        raise InvalidTransitionError(
+            "Only connected or needs_reauth connections can be refreshed "
+            f"(status: {connection.status})"
+        )
+    connector = get_connector(connection.provider_key)
+    try:
+        expires_at = await connector.refresh(connection)
+    except ConnectorProviderError as error:
+        connection.last_error_code = error.code
+        if error.code not in TRANSIENT_PROVIDER_CODES and connection.status == "connected":
+            connection.status = "needs_reauth"
+            await record_audit(
+                session,
+                context,
+                "integration.connection.needs_reauth",
+                "integration_connection",
+                connection.id,
+                outcome="failed",
+                reason=error.code,
+            )
+            await record_outbox_event(
+                session,
+                context,
+                "integration.connection.needs_reauth",
+                "integration_connection",
+                connection.id,
+            )
+        await record_audit(
+            session,
+            context,
+            "integration.connection.refresh_failed",
+            "integration_connection",
+            connection.id,
+            outcome="failed",
+            reason=error.code,
+        )
+        await session.commit()
+        raise
+    connection.token_expires_at = expires_at
+    connection.last_error_code = None
+    connection.status = "connected"
+    await record_audit(
+        session,
+        context,
+        "integration.connection.refreshed",
+        "integration_connection",
+        connection.id,
+    )
+    await record_outbox_event(
+        session,
+        context,
+        "integration.connection.refreshed",
         "integration_connection",
         connection.id,
     )
@@ -333,6 +422,7 @@ async def sync_connection(
     connection_id: str,
     mode: str,
 ) -> IntegrationSyncRun:
+    await require_capability(session, context, "connectors", operation="connector.sync")
     connection = await get_connection(session, context, connection_id)
     connection_is_writable(connection)
     if mode not in {"initial", "incremental", "reconcile"}:
@@ -357,6 +447,18 @@ async def sync_connection(
             .order_by(IntegrationSyncRun.created_at.desc())
             .limit(1)
         )
+
+    previous_run = (
+        await session.execute(
+            select(IntegrationSyncRun.status, IntegrationSyncRun.retry_count)
+            .where(IntegrationSyncRun.connection_id == connection_id)
+            .order_by(IntegrationSyncRun.created_at.desc())
+            .limit(1)
+        )
+    ).first()
+    consecutive_failures = (
+        previous_run.retry_count if previous_run and previous_run.status == "failed" else 0
+    )
 
     run = IntegrationSyncRun(
         connection_id=connection.id,
@@ -403,7 +505,19 @@ async def sync_connection(
         run.status = "failed"
         run.failure_code = error.code
         run.failure_detail = str(error)
-        run.retry_count += 1
+        run.retry_count = consecutive_failures + 1
+        # Permanent failures are not retried automatically; an operator must intervene.
+        run.next_retry_at = (
+            utc_now()
+            + timedelta(
+                seconds=min(
+                    SYNC_RETRY_BASE_SECONDS * 2 ** (run.retry_count - 1),
+                    settings.job_max_backoff_seconds,
+                )
+            )
+            if error.code in TRANSIENT_PROVIDER_CODES
+            else None
+        )
         run.finished_at = utc_now()
         run.lease_owner = None
         run.lease_expires_at = None
@@ -476,6 +590,7 @@ async def create_external_write(
     payload: ExternalWriteCreate,
     idempotency_key: str,
 ) -> ExternalWrite:
+    await require_capability(session, context, "connectors", operation="connector.write")
     if not idempotency_key.strip():
         raise InvalidRequestError("Idempotency-Key header is required")
     connection = await get_connection(session, context, connection_id)
@@ -535,7 +650,9 @@ async def ingest_webhook(
     external_account_id: str,
     signature: str,
     raw_body: bytes,
-) -> WebhookEvent:
+    trace_id: str | None = None,
+) -> tuple[WebhookEvent, bool]:
+    """Return the stored event and whether this delivery was a duplicate."""
     connector = get_connector(provider_key)
     connection = await session.scalar(
         select(IntegrationConnection).where(
@@ -547,6 +664,14 @@ async def ingest_webhook(
         raise NotFoundError("Integration connection not found")
     if not connector.verify_webhook(raw_body, signature, connection.secret_ref):
         raise WebhookSignatureError("Webhook signature is invalid")
+    await require_capability(
+        session,
+        system_context(connection.tenant_id, "system:webhook"),
+        "connectors",
+        operation="connector.webhook",
+    )
+    if connection.status in {"revoked", "disconnected"}:
+        raise ConflictError(f"Connection is {connection.status} and does not accept webhooks")
     try:
         payload = json.loads(raw_body)
     except json.JSONDecodeError as error:
@@ -557,6 +682,10 @@ async def ingest_webhook(
     event_type = payload.get("type")
     if not isinstance(event_id, str) or not event_id.strip():
         raise InvalidRequestError("Webhook event id is required")
+    if len(event_id) > MAX_WEBHOOK_EVENT_ID_LENGTH:
+        raise InvalidRequestError(
+            f"Webhook event id is longer than {MAX_WEBHOOK_EVENT_ID_LENGTH} characters"
+        )
     if not isinstance(event_type, str) or not event_type.strip():
         raise InvalidRequestError("Webhook event type is required")
     payload_hash = hashlib.sha256(raw_body).hexdigest()
@@ -569,10 +698,7 @@ async def ingest_webhook(
     if existing is not None:
         if existing.payload_hash != payload_hash:
             raise ConflictError("Webhook event id was replayed with a different payload")
-        existing.status = "duplicate"
-        await session.commit()
-        await session.refresh(existing)
-        return existing
+        return existing, True
 
     provider_timestamp = _parse_timestamp(payload.get("timestamp"))
     if provider_timestamp and utc_now() - provider_timestamp > timedelta(
@@ -585,8 +711,9 @@ async def ingest_webhook(
         "timestamp": payload.get("timestamp"),
         "data": payload.get("data") if isinstance(payload.get("data"), dict) else {},
     }
+    connection_id, tenant_id = connection.id, connection.tenant_id
     event = WebhookEvent(
-        connection_id=connection.id,
+        connection_id=connection_id,
         provider_event_id=event_id,
         event_type=event_type,
         payload_hash=payload_hash,
@@ -596,9 +723,52 @@ async def ingest_webhook(
         payload=sanitized_payload,
     )
     session.add(event)
+    try:
+        await session.flush()
+    except IntegrityError as error:
+        await session.rollback()
+        raced = await session.scalar(
+            select(WebhookEvent).where(
+                WebhookEvent.connection_id == connection_id,
+                WebhookEvent.provider_event_id == event_id,
+            )
+        )
+        if raced is None:
+            raise
+        if raced.payload_hash != payload_hash:
+            raise ConflictError(
+                "Webhook event id was replayed with a different payload"
+            ) from error
+        return raced, True
+    from .work.jobs import create_job_in_session
+
+    webhook_context = RequestContext(
+        tenant_id=tenant_id,
+        actor_id="integration:webhook",
+        role="system",
+        correlation_id=event_id,
+        permissions=frozenset({Permission.JOBS_MANAGE}),
+        trace_id=trace_id,
+    )
+    job = await create_job_in_session(
+        session,
+        webhook_context,
+        idempotency_key=f"webhook:{connection_id}:{event_id}",
+        job_type="integration.webhook",
+        queue="default",
+        payload={"event_id": event.id},
+    )
+    await record_audit(
+        session,
+        webhook_context,
+        "integration.webhook.received",
+        "webhook_event",
+        event.id,
+        details={"event_type": event_type, "job_id": job.id},
+    )
     session.add(
         OutboxEvent(
-            tenant_id=connection.tenant_id,
+            tenant_id=tenant_id,
             event_type="integration.webhook.received",
             aggregate_type="webhook_event",
             aggregate_id=event_id,
@@ -608,7 +778,7 @@ async def ingest_webhook(
     )
     await session.commit()
     await session.refresh(event)
-    return event
+    return event, False
 
 
 def _parse_timestamp(value: object) -> datetime | None:

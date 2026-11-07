@@ -19,6 +19,7 @@ JOB_TYPES = frozenset(
         "reminder.dispatch",
         "workflow.step",
         "integration.sync",
+        "integration.webhook",
         "knowledge.index",
         "notification.send",
     }

@@ -29,6 +29,18 @@ class InvalidTransitionError(DomainError):
     pass
 
 
+class SeparationOfDutiesError(DomainError):
+    pass
+
+
+class PermissionDeniedError(DomainError):
+    pass
+
+
+class CapabilityDisabledError(DomainError):
+    pass
+
+
 class ContactStatus(StrEnum):
     LEAD = "lead"
     QUALIFIED = "qualified"

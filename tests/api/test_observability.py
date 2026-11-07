@@ -16,7 +16,7 @@ def tenant_headers(tenant_id: str, user_id: str = "user-a") -> dict[str, str]:
 
 
 async def test_metrics_events_redaction_and_summary_permissions(client: AsyncClient) -> None:
-    headers = tenant_headers("tenant-a")
+    headers = tenant_headers("tenant-a", "user-d")
     contact = await client.post(
         "/api/v1/contacts",
         headers=headers,
@@ -69,25 +69,25 @@ async def test_proactive_checks_create_deduplicated_alert_and_review_work_item(
     due_at = (datetime.now(UTC) - timedelta(days=1)).isoformat()
     created = await client.post(
         "/api/v1/work-items",
-        headers=tenant_headers("tenant-a"),
+        headers=tenant_headers("tenant-a", "user-d"),
         json={"item_type": "commitment", "title": "Missed commitment", "due_at": due_at},
     )
     first = await client.post(
         "/api/v1/observability/proactive-checks/run",
-        headers=tenant_headers("tenant-a"),
+        headers=tenant_headers("tenant-a", "user-d"),
     )
     second = await client.post(
         "/api/v1/observability/proactive-checks/run",
-        headers=tenant_headers("tenant-a"),
+        headers=tenant_headers("tenant-a", "user-d"),
     )
     alerts = await client.get(
         "/api/v1/observability/alerts",
-        headers=tenant_headers("tenant-a"),
+        headers=tenant_headers("tenant-a", "user-d"),
         params={"status": "open"},
     )
     escalation_items = await client.get(
         "/api/v1/work-items",
-        headers=tenant_headers("tenant-a"),
+        headers=tenant_headers("tenant-a", "user-d"),
         params={"item_type": "escalation"},
     )
 
@@ -107,7 +107,7 @@ async def test_proactive_checks_create_deduplicated_alert_and_review_work_item(
 async def test_alert_acknowledge_and_resolve_and_tenant_isolation(client: AsyncClient) -> None:
     await client.post(
         "/api/v1/work-items",
-        headers=tenant_headers("tenant-a"),
+        headers=tenant_headers("tenant-a", "user-d"),
         json={
             "title": "Another overdue item",
             "due_at": (datetime.now(UTC) - timedelta(hours=2)).isoformat(),
@@ -115,22 +115,22 @@ async def test_alert_acknowledge_and_resolve_and_tenant_isolation(client: AsyncC
     )
     run = await client.post(
         "/api/v1/observability/proactive-checks/run",
-        headers=tenant_headers("tenant-a"),
+        headers=tenant_headers("tenant-a", "user-d"),
     )
     alert_id = run.json()["alert_ids"][0]
     acknowledged = await client.post(
         f"/api/v1/observability/alerts/{alert_id}/acknowledge",
-        headers=tenant_headers("tenant-a"),
+        headers=tenant_headers("tenant-a", "user-d"),
         json={"note": "Owner notified"},
     )
     resolved = await client.post(
         f"/api/v1/observability/alerts/{alert_id}/resolve",
-        headers=tenant_headers("tenant-a"),
+        headers=tenant_headers("tenant-a", "user-d"),
         json={"note": "Commitment rescheduled"},
     )
     other_tenant = await client.get(
         f"/api/v1/observability/alerts/{alert_id}",
-        headers=tenant_headers("tenant-b"),
+        headers=tenant_headers("tenant-b", "user-d"),
     )
 
     assert acknowledged.status_code == 200

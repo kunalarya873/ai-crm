@@ -842,6 +842,7 @@ class JobRead(BaseModel):
     request_hash: str
     job_type: str
     queue: str
+    trace_id: str | None = None
     priority: int
     payload: dict[str, object]
     status: str
@@ -1226,6 +1227,7 @@ class ActionProposalRead(BaseModel):
     expected_side_effects: list[str]
     source_ai_run_id: str | None
     requested_by: str
+    last_edited_by: str | None
     approved_by: str | None
     rejected_by: str | None
     approved_at: datetime | None
@@ -1314,6 +1316,7 @@ class OperationalEventRead(BaseModel):
     resource_id: str
     outcome: str
     correlation_id: str
+    trace_id: str | None = None
     payload: dict[str, object]
     created_at: datetime
 
@@ -1380,3 +1383,326 @@ class AIProviderHealthRead(BaseModel):
     model_key: str
     status: Literal["healthy", "unhealthy"]
     detail: str
+
+
+class MemberCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: str = Field(min_length=3, max_length=320)
+    role: str = Field(min_length=1, max_length=30)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        return value.strip().lower()
+
+
+class MemberUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    role: str | None = Field(default=None, min_length=1, max_length=30)
+    is_active: bool | None = None
+
+    @model_validator(mode="after")
+    def require_a_change(self) -> "MemberUpdate":
+        if self.role is None and self.is_active is None:
+            raise ValueError("At least one of role or is_active is required")
+        return self
+
+
+class MemberRead(BaseModel):
+    id: str
+    user_id: str
+    email: str
+    display_name: str
+    role: str
+    is_active: bool
+    version: int
+    created_at: datetime
+
+
+AgentCapability = Literal["read", "propose", "delegate", "escalate"]
+RiskLevel = Literal["low", "medium", "high"]
+EscalationReason = Literal[
+    "uncertainty",
+    "policy_denial",
+    "missing_context",
+    "sensitive_action",
+    "conflicting_outputs",
+    "budget_exhausted",
+    "repeated_failure",
+    "deadline_exceeded",
+]
+
+
+class AgentCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    key: str = Field(pattern=r"^[a-z0-9][a-z0-9._-]{1,99}$")
+    name: str = Field(min_length=1, max_length=200)
+    purpose: str = Field(min_length=1, max_length=2000)
+    agent_version: str = Field(default="v1", min_length=1, max_length=50)
+    owner_id: str | None = Field(default=None, max_length=100)
+    allowed_capabilities: list[AgentCapability] = Field(default_factory=list, max_length=4)
+    allowed_actions: list[str] = Field(default_factory=list, max_length=20)
+    allow_sensitive: bool = False
+    risk_ceiling: RiskLevel = "low"
+    max_depth: int = Field(default=1, ge=0)
+    max_fanout: int = Field(default=2, ge=0)
+    token_budget: int = Field(default=20000, ge=1)
+    step_budget: int = Field(default=20, ge=1)
+    side_effect_budget: int = Field(default=3, ge=0)
+
+    @field_validator("name", "purpose")
+    @classmethod
+    def strip_required_text(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("must not be blank")
+        return cleaned
+
+
+class AgentUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    purpose: str | None = Field(default=None, min_length=1, max_length=2000)
+    agent_version: str | None = Field(default=None, min_length=1, max_length=50)
+    allowed_capabilities: list[AgentCapability] | None = Field(default=None, max_length=4)
+    allowed_actions: list[str] | None = Field(default=None, max_length=20)
+    allow_sensitive: bool | None = None
+    risk_ceiling: RiskLevel | None = None
+    max_depth: int | None = Field(default=None, ge=0)
+    max_fanout: int | None = Field(default=None, ge=0)
+    token_budget: int | None = Field(default=None, ge=1)
+    step_budget: int | None = Field(default=None, ge=1)
+    side_effect_budget: int | None = Field(default=None, ge=0)
+    status: Literal["active", "suspended", "retired"] | None = None
+
+    @model_validator(mode="after")
+    def require_a_change(self) -> "AgentUpdate":
+        if not self.model_fields_set:
+            raise ValueError("at least one field must be provided")
+        return self
+
+
+class AgentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    key: str
+    name: str
+    purpose: str
+    agent_version: str
+    owner_id: str
+    allowed_capabilities: list[str]
+    allowed_actions: list[str]
+    allow_sensitive: bool
+    risk_ceiling: str
+    max_depth: int
+    max_fanout: int
+    token_budget: int
+    step_budget: int
+    side_effect_budget: int
+    status: str
+    version: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class AgentRunCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    agent_id: str = Field(min_length=1, max_length=36)
+    objective: str = Field(min_length=1, max_length=500)
+    expected_result: str | None = Field(default=None, max_length=1000)
+    deadline_at: datetime
+    work_item_id: str | None = Field(default=None, max_length=36)
+    token_budget: int | None = Field(default=None, ge=1)
+    step_budget: int | None = Field(default=None, ge=1)
+    side_effect_budget: int | None = Field(default=None, ge=0)
+
+    @field_validator("objective")
+    @classmethod
+    def strip_objective(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("must not be blank")
+        return cleaned
+
+
+class DelegationInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    agent_key: str = Field(min_length=1, max_length=100)
+    reason: str = Field(min_length=1, max_length=1000)
+    objective: str = Field(min_length=1, max_length=500)
+    expected_result: str = Field(min_length=1, max_length=1000)
+    deadline_at: datetime
+    token_budget: int = Field(ge=1)
+    step_budget: int = Field(ge=1)
+    side_effect_budget: int = Field(default=0, ge=0)
+
+
+class EscalationInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: EscalationReason
+    summary: str = Field(min_length=1, max_length=2000)
+    evidence_refs: list[dict[str, object]] = Field(default_factory=list, max_length=50)
+    proposed_next_steps: list[str] = Field(default_factory=list, max_length=10)
+
+
+class OutputInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    outcome: Literal["success", "failed"] = "success"
+    summary: str = Field(min_length=1, max_length=4000)
+    result: dict[str, object] = Field(default_factory=dict)
+
+
+class AgentStepCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    step_key: str = Field(min_length=1, max_length=200)
+    step_type: Literal["retrieve", "propose", "delegate", "escalate", "output"]
+    input: dict[str, object] = Field(default_factory=dict)
+    tokens: int = Field(default=0, ge=0, le=1_000_000)
+
+
+class AgentRunRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    agent_id: str
+    agent_key: str
+    agent_version: str
+    parent_run_id: str | None
+    root_run_id: str
+    depth: int
+    max_depth: int
+    max_fanout: int
+    owner_id: str
+    objective: str
+    expected_result: str | None
+    deadline_at: datetime
+    work_item_id: str | None
+    token_budget: int
+    tokens_used: int
+    step_budget: int
+    steps_used: int
+    side_effect_budget: int
+    side_effects_used: int
+    status: str
+    terminal_reason: str | None
+    escalation_work_item_id: str | None
+    escalation_reason: str | None
+    trace_id: str | None
+    version: int
+    completed_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AgentStepRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    run_id: str
+    seq: int
+    step_key: str
+    step_type: str
+    status: str
+    input: dict[str, object]
+    output: dict[str, object]
+    action_proposal_id: str | None
+    child_run_id: str | None
+    context_assembly_id: str | None
+    tokens: int
+    error_code: str | None
+    created_at: datetime
+
+
+class AgentStepResult(BaseModel):
+    step: AgentStepRead
+    run: AgentRunRead
+
+
+class AgentRunDetail(AgentRunRead):
+    steps: list[AgentStepRead]
+
+
+class AgentMessageRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    root_run_id: str
+    from_run_id: str
+    to_run_id: str | None
+    kind: str
+    body: dict[str, object]
+    created_at: datetime
+
+
+class AgentEvalRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scenario_key: str | None = Field(default=None, max_length=100)
+    replay_key: str = Field(min_length=1, max_length=100)
+
+
+class AgentEvalScenarioRead(BaseModel):
+    key: str
+    description: str
+    objective: str
+    expected_proposals: int
+    expected_escalation: str | None
+    human_baseline_minutes: int
+    human_baseline_interventions: int
+    human_baseline_is_assumption: bool
+
+
+class AgentEvalResultRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    scenario_key: str
+    strategy: str
+    replay_key: str
+    task_success: bool
+    metrics: dict[str, object]
+    run_ids: list[str]
+    created_by: str
+    created_at: datetime
+
+
+class AgentEvalComparison(BaseModel):
+    scenario_key: str
+    description: str
+    strategies: dict[str, dict[str, object]]
+    deltas_multi_minus_single: dict[str, float | None]
+    assumptions: list[str]
+
+
+class AgentEvalReport(BaseModel):
+    replay_key: str
+    comparisons: list[AgentEvalComparison]
+    aggregate: dict[str, dict[str, int]]
+    assumptions: list[str]
+
+
+class FeatureFlagUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class FeatureFlagRead(BaseModel):
+    flag: str
+    enabled: bool
+    source: Literal["default", "tenant", "platform"]
+    reason: str | None
+    version: int
+    updated_by: str | None = None
+    updated_at: datetime | None = None

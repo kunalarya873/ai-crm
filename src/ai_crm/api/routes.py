@@ -1,4 +1,5 @@
-from typing import Annotated
+from collections.abc import Sequence
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from sqlalchemy.exc import SQLAlchemyError
@@ -8,6 +9,7 @@ from ..api.deps import RequestContext, require_permission
 from ..config import settings
 from ..db import check_database, get_session
 from ..domain import NotFoundError
+from ..pagination import encode_cursor
 from ..permissions import Permission
 from ..schemas import (
     ActivityCreate,
@@ -108,7 +110,7 @@ TaskUpdateContext = Annotated[
 ]
 
 
-def parse_if_match(value: str | None) -> int | None:
+def parse_if_match(value: str | None, *, minimum: int = 1) -> int | None:
     if value is None:
         return None
     normalized = value.strip()
@@ -122,16 +124,26 @@ def parse_if_match(value: str | None) -> int | None:
             status_code=400,
             detail="If-Match must contain an integer version",
         ) from error
-    if version < 1:
+    if version < minimum:
         raise HTTPException(
             status_code=400,
-            detail="If-Match must contain a positive integer version",
+            detail="If-Match must contain a positive integer version"
+            if minimum > 0
+            else "If-Match must contain a non-negative integer version",
         )
     return version
 
 
 def set_etag(response: Response, version: int) -> None:
     response.headers["ETag"] = f'"{version}"'
+
+
+def trim_page(response: Response, fetched: Sequence[Any], limit: int) -> Sequence[Any]:
+    """Services fetch limit + 1 rows; the extra row proves another page exists."""
+    items = fetched[:limit]
+    if len(fetched) > limit:
+        response.headers["X-Next-Cursor"] = encode_cursor(items[-1])
+    return items
 
 
 @router.get("/health", response_model=HealthResponse, tags=["system"])
@@ -172,8 +184,10 @@ async def create_contact_endpoint(
 async def list_contacts_endpoint(
     session: SessionDependency,
     context: ContactReadContext,
+    response: Response,
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
+    cursor: str | None = None,
     company_id: str | None = None,
     owner_id: str | None = None,
     contact_status: str | None = Query(default=None, alias="status"),
@@ -183,14 +197,16 @@ async def list_contacts_endpoint(
     contacts = await list_contacts(
         session,
         context,
-        limit,
+        limit + 1,
         offset,
         company_id=company_id,
         owner_id=owner_id,
         contact_status=contact_status,
         query=query,
         archived=archived,
+        cursor=cursor,
     )
+    contacts = trim_page(response, contacts, limit)
     return [ContactRead.model_validate(contact) for contact in contacts]
 
 
@@ -249,10 +265,13 @@ async def create_company_endpoint(
 async def list_companies_endpoint(
     session: SessionDependency,
     context: CompanyReadContext,
+    response: Response,
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
+    cursor: str | None = None,
 ) -> list[CompanyRead]:
-    companies = await list_companies(session, context, limit, offset)
+    companies = await list_companies(session, context, limit + 1, offset, cursor=cursor)
+    companies = trim_page(response, companies, limit)
     return [CompanyRead.model_validate(company) for company in companies]
 
 
@@ -309,8 +328,10 @@ async def create_opportunity_endpoint(
 async def list_opportunities_endpoint(
     session: SessionDependency,
     context: OpportunityReadContext,
+    response: Response,
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
+    cursor: str | None = None,
     stage: str | None = None,
     owner_id: str | None = None,
     company_id: str | None = None,
@@ -319,13 +340,15 @@ async def list_opportunities_endpoint(
     opportunities = await list_opportunities(
         session,
         context,
-        limit,
+        limit + 1,
         offset,
         stage=stage,
         owner_id=owner_id,
         company_id=company_id,
         opportunity_status=opportunity_status,
+        cursor=cursor,
     )
+    opportunities = trim_page(response, opportunities, limit)
     return [OpportunityRead.model_validate(opportunity) for opportunity in opportunities]
 
 
@@ -435,8 +458,10 @@ async def create_task_endpoint(
 async def list_tasks_endpoint(
     session: SessionDependency,
     context: TaskReadContext,
+    response: Response,
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
+    cursor: str | None = None,
     task_status: str | None = Query(default=None, alias="status"),
     assignee_id: str | None = None,
     contact_id: str | None = None,
@@ -446,14 +471,16 @@ async def list_tasks_endpoint(
     tasks = await list_tasks(
         session,
         context,
-        limit,
+        limit + 1,
         offset,
         task_status=task_status,
         assignee_id=assignee_id,
         contact_id=contact_id,
         opportunity_id=opportunity_id,
         overdue=overdue,
+        cursor=cursor,
     )
+    tasks = trim_page(response, tasks, limit)
     return [TaskRead.model_validate(task) for task in tasks]
 
 

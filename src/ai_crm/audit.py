@@ -56,6 +56,7 @@ async def record_audit(
                 resource_id=entity_id,
                 outcome=outcome,
                 correlation_id=context.correlation_id,
+                trace_id=context.trace_id,
                 dedup_key=dedup_key,
                 payload=safe_details,
             )

@@ -33,13 +33,14 @@ async def create_proposal(
     *,
     key: str,
     expires_at: str | None = None,
+    user_id: str = "user-a",
 ) -> dict[str, object]:
     body: dict[str, object] = {"action_type": action_type, "payload": payload}
     if expires_at is not None:
         body["expires_at"] = expires_at
     response = await client.post(
         "/api/v1/actions/proposals",
-        headers={**tenant_headers("tenant-a"), "Idempotency-Key": key},
+        headers={**tenant_headers("tenant-a", user_id), "Idempotency-Key": key},
         json=body,
     )
     assert response.status_code == 201
@@ -49,7 +50,7 @@ async def create_proposal(
 async def approve(client: AsyncClient, proposal: dict[str, object]) -> dict[str, object]:
     response = await client.post(
         f"/api/v1/actions/proposals/{proposal['id']}/approve",
-        headers={**tenant_headers("tenant-a"), "If-Match": f'"{proposal["version"]}"'},
+        headers={**tenant_headers("tenant-a", "user-c"), "If-Match": f'"{proposal["version"]}"'},
         json={"reason": "Reviewed and approved"},
     )
     assert response.status_code == 200
@@ -210,7 +211,7 @@ async def test_expired_proposal_and_viewer_permissions(client: AsyncClient) -> N
     )
     future = await client.post(
         "/api/v1/actions/proposals/expire",
-        headers=tenant_headers("tenant-a"),
+        headers=tenant_headers("tenant-a", "user-c"),
     )
 
     assert expired["status"] == "proposed"
@@ -225,7 +226,7 @@ async def test_external_action_uses_fixture_write_and_effect_idempotency(
 ) -> None:
     connection = await client.post(
         "/api/v1/integrations/connections",
-        headers=tenant_headers("tenant-a"),
+        headers=tenant_headers("tenant-a", "user-d"),
         json={
             "provider_key": "fixture",
             "external_account_id": "action-external-account",
@@ -243,11 +244,12 @@ async def test_external_action_uses_fixture_write_and_effect_idempotency(
             "body": "Created through the action runtime",
         },
         key="action-external-1",
+        user_id="user-d",
     )
     approved = await approve(client, proposal)
     execution = await client.post(
         f"/api/v1/actions/proposals/{proposal['id']}/execute",
-        headers={**tenant_headers("tenant-a"), "If-Match": f'"{approved["version"]}"'},
+        headers={**tenant_headers("tenant-a", "user-d"), "If-Match": f'"{approved["version"]}"'},
     )
     executions = await client.get(
         "/api/v1/actions/executions",
@@ -266,7 +268,7 @@ async def test_uncertain_external_action_requires_reconciliation_before_retry(
 ) -> None:
     connection = await client.post(
         "/api/v1/integrations/connections",
-        headers=tenant_headers("tenant-a"),
+        headers=tenant_headers("tenant-a", "user-d"),
         json={
             "provider_key": "fixture",
             "external_account_id": "action-uncertain-account",
@@ -283,15 +285,16 @@ async def test_uncertain_external_action_requires_reconciliation_before_retry(
             "subject": "Uncertain external activity",
         },
         key="action-uncertain-1",
+        user_id="user-d",
     )
     approved = await approve(client, proposal)
     execution = await client.post(
         f"/api/v1/actions/proposals/{proposal['id']}/execute",
-        headers={**tenant_headers("tenant-a"), "If-Match": f'"{approved["version"]}"'},
+        headers={**tenant_headers("tenant-a", "user-d"), "If-Match": f'"{approved["version"]}"'},
     )
     retry = await client.post(
         f"/api/v1/actions/executions/{execution.json()['id']}/retry",
-        headers=tenant_headers("tenant-a"),
+        headers=tenant_headers("tenant-a", "user-c"),
         json={"operator_note": "Do not retry until provider outcome is reconciled"},
     )
 
@@ -299,3 +302,83 @@ async def test_uncertain_external_action_requires_reconciliation_before_retry(
     assert execution.json()["status"] == "uncertain"
     assert execution.json()["uncertain_outcome"] is True
     assert retry.status_code == 409
+
+
+async def test_requester_cannot_approve_own_proposal_and_denial_is_audited(
+    client: AsyncClient,
+) -> None:
+    proposal = await create_proposal(
+        client, "task.create", {"title": "Self approval"}, key="self-approve-1", user_id="user-c"
+    )
+    own = await client.post(
+        f"/api/v1/actions/proposals/{proposal['id']}/approve",
+        headers={**tenant_headers("tenant-a", "user-c"), "If-Match": f'"{proposal["version"]}"'},
+        json={"reason": "I approve myself"},
+    )
+    other = await client.post(
+        f"/api/v1/actions/proposals/{proposal['id']}/approve",
+        headers={**tenant_headers("tenant-a", "user-d"), "If-Match": f'"{proposal["version"]}"'},
+        json={"reason": "Independent review"},
+    )
+
+    assert own.status_code == 403
+    assert own.json()["code"] == "separation_of_duties"
+    assert other.status_code == 200
+    assert other.json()["approved_by"] == "user-d"
+
+
+async def test_member_can_propose_but_not_approve(client: AsyncClient) -> None:
+    proposal = await create_proposal(
+        client, "task.create", {"title": "Member proposal"}, key="member-approve-1"
+    )
+    denied = await client.post(
+        f"/api/v1/actions/proposals/{proposal['id']}/approve",
+        headers={**tenant_headers("tenant-a", "user-a"), "If-Match": f'"{proposal["version"]}"'},
+        json={"reason": "Not allowed"},
+    )
+    approved = await approve(client, proposal)
+
+    assert denied.status_code == 403
+    assert approved["status"] == "approved"
+
+
+async def test_editor_cannot_approve_and_reapproval_status_wins(client: AsyncClient) -> None:
+    proposal = await create_proposal(
+        client, "task.create", {"title": "Edited"}, key="editor-approve-1"
+    )
+    edited = await client.patch(
+        f"/api/v1/actions/proposals/{proposal['id']}",
+        headers={**tenant_headers("tenant-a", "user-d"), "If-Match": '"1"'},
+        json={"payload": {"title": "Edited by admin"}},
+    )
+    editor_approve = await client.post(
+        f"/api/v1/actions/proposals/{proposal['id']}/approve",
+        headers={**tenant_headers("tenant-a", "user-d"), "If-Match": '"2"'},
+        json={"reason": "Own edit"},
+    )
+
+    assert edited.json()["last_edited_by"] == "user-d"
+    assert editor_approve.status_code == 403
+    assert editor_approve.json()["code"] == "separation_of_duties"
+
+
+async def test_state_error_wins_over_self_approval_denial(client: AsyncClient) -> None:
+    proposal = await create_proposal(
+        client, "task.create", {"title": "Mgr"}, key="state-first-1", user_id="user-c"
+    )
+    approved = await client.post(
+        f"/api/v1/actions/proposals/{proposal['id']}/approve",
+        headers={**tenant_headers("tenant-a", "user-d"), "If-Match": '"1"'},
+        json={"reason": "ok"},
+    )
+    repeat = await client.post(
+        f"/api/v1/actions/proposals/{proposal['id']}/approve",
+        headers={
+            **tenant_headers("tenant-a", "user-c"),
+            "If-Match": f'"{approved.json()["version"]}"',
+        },
+        json={"reason": "again"},
+    )
+
+    assert repeat.status_code == 409
+    assert repeat.json()["code"] == "invalid_transition"

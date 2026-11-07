@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..api.deps import RequestContext
 from ..audit import record_audit, record_outbox_event
 from ..domain import ConflictError, InvalidRequestError, NotFoundError
+from ..flags import require_capability
 from ..models import WorkflowInstance, WorkflowTransition, utc_now
 from ..schemas import WorkflowAdvance, WorkflowStart
 from .domain import workflow_steps
@@ -31,6 +32,7 @@ async def start_workflow(
     payload: WorkflowStart,
     idempotency_key: str,
 ) -> WorkflowInstance:
+    await require_capability(session, context, "workflows", operation="workflow.start")
     if not idempotency_key.strip():
         raise InvalidRequestError("Idempotency-Key header is required")
     steps = workflow_steps(payload.workflow_key)
@@ -118,6 +120,7 @@ async def advance_workflow(
     payload: WorkflowAdvance,
     expected_version: int | None,
 ) -> WorkflowInstance:
+    await require_capability(session, context, "workflows", operation="workflow.advance")
     if expected_version is None:
         raise InvalidRequestError("If-Match header is required")
     workflow = await get_workflow(session, context, workflow_id)
@@ -195,6 +198,7 @@ async def resume_workflow(
     workflow_id: str,
     expected_version: int | None,
 ) -> WorkflowInstance:
+    await require_capability(session, context, "workflows", operation="workflow.resume")
     if expected_version is None:
         raise InvalidRequestError("If-Match header is required")
     workflow = await get_workflow(session, context, workflow_id)

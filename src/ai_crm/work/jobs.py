@@ -1,8 +1,12 @@
 import hashlib
 import json
+from collections.abc import Collection
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..api.deps import RequestContext
@@ -115,6 +119,7 @@ async def create_job_in_session(
         request_hash=request_hash,
         job_type=job_type,
         queue=queue,
+        trace_id=context.trace_id,
         priority=priority,
         payload=payload,
         run_at=scheduled_for,
@@ -199,6 +204,9 @@ async def list_jobs(
     return list(result)
 
 
+CLAIM_ATTEMPTS = 3
+
+
 async def claim_next_job(
     session: AsyncSession,
     context: RequestContext,
@@ -206,6 +214,7 @@ async def claim_next_job(
     queue: str,
     worker_id: str,
     lease_seconds: int,
+    job_types: Collection[str] | None = None,
 ) -> DurableJob | None:
     if not worker_id.strip():
         raise InvalidRequestError("worker_id is required")
@@ -227,27 +236,54 @@ async def claim_next_job(
             DurableJob.tenant_id == context.tenant_id,
             DurableJob.queue == queue,
             ready,
+            *([DurableJob.job_type.in_(job_types)] if job_types is not None else []),
         )
         .order_by(DurableJob.priority.desc(), DurableJob.run_at, DurableJob.created_at)
         .limit(1)
     )
-    job = await session.scalar(statement)
+    job: DurableJob | None = None
+    for _ in range(CLAIM_ATTEMPTS):
+        job = await session.scalar(statement)
+        if job is None:
+            return None
+        previous_status, previous_attempts = job.status, job.attempts
+        values: dict[str, object] = {
+            "status": "running",
+            "lease_owner": worker_id,
+            "lease_expires_at": now + timedelta(seconds=lease_seconds),
+            "heartbeat_at": now,
+            "timeout_at": now + timedelta(seconds=job.timeout_seconds),
+            "started_at": job.started_at or now,
+            "attempts": previous_attempts + 1,
+            "updated_at": now,
+        }
+        if previous_status == "running":
+            values["error_code"] = "worker_lease_expired"
+            values["error_detail"] = "Previous worker lease expired before completion"
+        claimed = cast(
+            CursorResult,
+            await session.execute(
+                update(DurableJob)
+                .where(
+                    DurableJob.id == job.id,
+                    DurableJob.tenant_id == context.tenant_id,
+                    DurableJob.status == previous_status,
+                    DurableJob.attempts == previous_attempts,
+                )
+                .values(**values)
+            ),
+        )
+        if claimed.rowcount == 1:
+            break
+        await session.rollback()
+    else:
+        return None
     if job is None:
         return None
-    if job.status == "running":
-        job.error_code = "worker_lease_expired"
-        job.error_detail = "Previous worker lease expired before completion"
-    job.status = "running"
-    job.lease_owner = worker_id
-    job.lease_expires_at = now + timedelta(seconds=lease_seconds)
-    job.heartbeat_at = now
-    job.timeout_at = now + timedelta(seconds=job.timeout_seconds)
-    job.started_at = job.started_at or now
-    job.attempts += 1
-    job.updated_at = now
+    await session.refresh(job)
     await record_audit(
         session,
-        context,
+        replace(context, trace_id=job.trace_id) if job.trace_id else context,
         "job.claimed",
         "durable_job",
         job.id,

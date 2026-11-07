@@ -30,35 +30,27 @@ async def check_database() -> None:
 
 async def seed_local_identity() -> None:
     async with SessionFactory() as session:
-        organization = await session.get(Organization, "demo-tenant")
-        if organization is None:
-            session.add(Organization(id="demo-tenant", name="Demo Tenant"))
+        await _seed_identity(session)
 
-        user = await session.get(User, "demo-user")
-        if user is None:
-            session.add(
-                User(
-                    id="demo-user",
-                    email="demo@example.com",
-                    display_name="Demo User",
-                )
-            )
 
+async def _seed_identity(session: AsyncSession) -> None:
+    if await session.get(Organization, "demo-tenant") is None:
+        session.add(Organization(id="demo-tenant", name="Demo Tenant"))
+    for user_id, email, display_name, role in (
+        ("demo-user", "demo@example.com", "Demo User", "admin"),
+        ("demo-manager", "demo-manager@example.com", "Demo Manager", "manager"),
+    ):
+        if await session.get(User, user_id) is None:
+            session.add(User(id=user_id, email=email, display_name=display_name))
         membership = await session.scalar(
             select(Membership).where(
                 Membership.tenant_id == "demo-tenant",
-                Membership.user_id == "demo-user",
+                Membership.user_id == user_id,
             )
         )
         if membership is None:
-            session.add(
-                Membership(
-                    tenant_id="demo-tenant",
-                    user_id="demo-user",
-                    role="admin",
-                )
-            )
-        await session.commit()
+            session.add(Membership(tenant_id="demo-tenant", user_id=user_id, role=role))
+    await session.commit()
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:

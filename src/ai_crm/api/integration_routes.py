@@ -12,6 +12,7 @@ from ..integrations import (
     list_connections,
     list_record_links,
     list_sync_runs,
+    refresh_connection,
     set_connection_status,
     sync_connection,
     test_connection,
@@ -86,6 +87,20 @@ async def test_connection_endpoint(
     context: ManageContext,
 ) -> IntegrationConnectionRead:
     connection = await test_connection(session, context, connection_id)
+    return IntegrationConnectionRead.model_validate(connection)
+
+
+@router.post(
+    "/integrations/connections/{connection_id}/refresh",
+    response_model=IntegrationConnectionRead,
+    tags=["integrations"],
+)
+async def refresh_connection_endpoint(
+    connection_id: str,
+    session: SessionDependency,
+    context: ManageContext,
+) -> IntegrationConnectionRead:
+    connection = await refresh_connection(session, context, connection_id)
     return IntegrationConnectionRead.model_validate(connection)
 
 
@@ -196,15 +211,16 @@ async def receive_webhook_endpoint(
     signature: Annotated[str | None, Header(alias="X-Webhook-Signature")] = None,
 ) -> WebhookAccepted:
     raw_body = await request.body()
-    event = await ingest_webhook(
+    event, duplicate = await ingest_webhook(
         session,
         provider_key,
         external_account_id or "",
         signature or "",
         raw_body,
+        getattr(request.state, "trace_id", None),
     )
     return WebhookAccepted(
         id=event.id,
         provider_event_id=event.provider_event_id,
-        status=event.status,
+        status="duplicate" if duplicate else event.status,
     )

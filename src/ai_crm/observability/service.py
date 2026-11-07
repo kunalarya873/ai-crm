@@ -12,6 +12,7 @@ from ..models import (
     AIFeedback,
     AIRun,
     DurableJob,
+    IntegrationConnection,
     MetricObservation,
     OperationalAlert,
     OperationalEvent,
@@ -82,6 +83,7 @@ async def list_events(
     context: RequestContext,
     *,
     event_type: str | None = None,
+    trace_id: str | None = None,
     limit: int,
     offset: int,
 ) -> list[OperationalEvent]:
@@ -89,6 +91,8 @@ async def list_events(
     statement = select(OperationalEvent).where(OperationalEvent.tenant_id == context.tenant_id)
     if event_type:
         statement = statement.where(OperationalEvent.event_type == event_type)
+    if trace_id:
+        statement = statement.where(OperationalEvent.trace_id == trace_id)
     result = await session.scalars(
         statement.order_by(OperationalEvent.created_at.desc()).offset(offset).limit(limit)
     )
@@ -463,6 +467,35 @@ async def run_proactive_checks(
             related_type="opportunity",
             related_id=opportunity.id,
             evidence=[{"field": "updated_at", "value": opportunity_updated_at.isoformat()}],
+            now=now,
+        )
+        created += result[0]
+        reopened += result[1]
+        work_created += result[2]
+        suppressed += result[3]
+        if result[4]:
+            alert_ids.append(result[4])
+
+    reauth_connections = list(
+        await session.scalars(
+            select(IntegrationConnection).where(
+                IntegrationConnection.tenant_id == context.tenant_id,
+                IntegrationConnection.status == "needs_reauth",
+            )
+        )
+    )
+    for connection in reauth_connections:
+        result = await _ensure_exception(
+            session,
+            context,
+            rule_key="connection_needs_reauth",
+            alert_type="system",
+            severity="warning",
+            title=f"Integration needs re-authorisation: {connection.external_account_id}",
+            description="Token refresh failed permanently; syncs and writes are paused.",
+            related_type="integration_connection",
+            related_id=connection.id,
+            evidence=[{"field": "last_error_code", "value": connection.last_error_code}],
             now=now,
         )
         created += result[0]

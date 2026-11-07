@@ -307,7 +307,16 @@ async def test_knowledge_visibility_and_tenant_filters_do_not_leak_metadata(
     assert viewer_context.json()["items"] == []
     assert viewer_context.json()["insufficient_evidence"] is True
     owner_ids = {item["source_id"] for item in owner_search.json()["items"]}
-    assert {private_source["id"], restricted_source["id"], sensitive_source["id"]} <= owner_ids
+    assert {private_source["id"], restricted_source["id"]} <= owner_ids
+    assert sensitive_source["id"] not in owner_ids
+    sensitive_search = await client.get(
+        "/api/v1/knowledge/search",
+        headers=tenant_headers("tenant-a", "user-d"),
+        params={"q": "phrase"},
+    )
+    assert sensitive_source["id"] in {
+        item["source_id"] for item in sensitive_search.json()["items"]
+    }
 
 
 async def test_context_excludes_non_ai_sources_and_reports_insufficient_evidence(

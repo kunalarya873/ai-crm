@@ -106,6 +106,7 @@ async def list_events_endpoint(
     session: SessionDependency,
     context: ReadContext,
     event_type: str | None = None,
+    trace_id: str | None = Query(default=None, min_length=32, max_length=32),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> list[OperationalEventRead]:
@@ -113,6 +114,7 @@ async def list_events_endpoint(
         session,
         context,
         event_type=event_type,
+        trace_id=trace_id,
         limit=limit,
         offset=offset,
     )

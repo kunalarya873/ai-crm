@@ -11,6 +11,7 @@ from ..api.deps import RequestContext
 from ..audit import record_audit, record_outbox_event
 from ..config import settings
 from ..domain import ConflictError, InvalidRequestError, NotFoundError
+from ..flags import require_capability
 from ..knowledge import assemble_context
 from ..models import AIFeedback, AIPromptVersion, AIRun, utc_now
 from ..permissions import Permission
@@ -153,6 +154,7 @@ class AIUseCaseService:
         idempotency_key: str,
         feature_flag: str = "ai_enabled",
     ) -> BaseModel:
+        await require_capability(session, context, "ai", operation=f"ai.{use_case}")
         if use_case not in USE_CASES:
             raise InvalidRequestError(f"Unsupported AI use case: {use_case}")
         if Permission.KNOWLEDGE_CONTEXT not in context.permissions:

@@ -89,11 +89,12 @@ async def _validate_references(
             raise NotFoundError("A work item dependency was not found")
 
 
-async def create_work_item(
+async def create_work_item_in_session(
     session: AsyncSession,
     context: RequestContext,
     payload: WorkItemCreate,
 ) -> WorkItem:
+    """Create a work item without committing, so callers can make it atomic with theirs."""
     validate_work_item_type(payload.item_type)
     validate_timezone(payload.timezone)
     require_aware_datetime(payload.due_at, "due_at")
@@ -127,6 +128,15 @@ async def create_work_item(
         item.id,
         {"item_type": item.item_type, "status": item.status},
     )
+    return item
+
+
+async def create_work_item(
+    session: AsyncSession,
+    context: RequestContext,
+    payload: WorkItemCreate,
+) -> WorkItem:
+    item = await create_work_item_in_session(session, context, payload)
     await session.commit()
     await session.refresh(item)
     return item

@@ -40,31 +40,73 @@ class Permission(StrEnum):
     ACTIONS_RECOVER = "actions:recover"
     OBSERVABILITY_READ = "observability:read"
     OBSERVABILITY_MANAGE = "observability:manage"
+    ADMIN_MEMBERS_READ = "admin:members:read"
+    ADMIN_MEMBERS_MANAGE = "admin:members:manage"
+    ADMIN_FLAGS_READ = "admin:flags:read"
+    ADMIN_FLAGS_MANAGE = "admin:flags:manage"
+    AGENTS_READ = "agents:read"
+    AGENTS_RUN = "agents:run"
+    AGENTS_MANAGE = "agents:manage"
+    AGENTS_EVALUATE = "agents:evaluate"
 
+
+_VIEWER_PERMISSIONS = frozenset(
+    {
+        Permission.CONTACTS_READ,
+        Permission.COMPANIES_READ,
+        Permission.OPPORTUNITIES_READ,
+        Permission.ACTIVITIES_READ,
+        Permission.TASKS_READ,
+        Permission.INTEGRATIONS_READ,
+        Permission.KNOWLEDGE_READ,
+        Permission.KNOWLEDGE_CONTEXT,
+        Permission.WORK_READ,
+        Permission.JOBS_READ,
+        Permission.WORKFLOWS_READ,
+        Permission.AI_READ,
+        Permission.AI_USE,
+        Permission.ACTIONS_READ,
+        Permission.OBSERVABILITY_READ,
+        Permission.AGENTS_READ,
+    }
+)
+
+_MEMBER_PERMISSIONS = _VIEWER_PERMISSIONS | {
+    Permission.CONTACTS_CREATE,
+    Permission.CONTACTS_UPDATE,
+    Permission.COMPANIES_CREATE,
+    Permission.COMPANIES_UPDATE,
+    Permission.OPPORTUNITIES_CREATE,
+    Permission.OPPORTUNITIES_UPDATE,
+    Permission.ACTIVITIES_CREATE,
+    Permission.TASKS_CREATE,
+    Permission.TASKS_UPDATE,
+    Permission.INTEGRATIONS_SYNC,
+    Permission.KNOWLEDGE_MANAGE,
+    Permission.WORK_MANAGE,
+    Permission.JOBS_MANAGE,
+    Permission.WORKFLOWS_MANAGE,
+    Permission.AI_FEEDBACK,
+    Permission.ACTIONS_PROPOSE,
+    Permission.ACTIONS_EXECUTE,
+    Permission.AGENTS_RUN,
+}
+
+_MANAGER_PERMISSIONS = _MEMBER_PERMISSIONS | {
+    Permission.KNOWLEDGE_SENSITIVE,
+    Permission.INTEGRATIONS_WRITE,
+    Permission.ACTIONS_APPROVE,
+    Permission.ACTIONS_RECOVER,
+    Permission.OBSERVABILITY_MANAGE,
+    Permission.ADMIN_MEMBERS_READ,
+    Permission.ADMIN_FLAGS_READ,
+}
 
 ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
     "admin": frozenset(Permission),
-    "manager": frozenset(Permission),
-    "member": frozenset(Permission),
-    "viewer": frozenset(
-        {
-            Permission.CONTACTS_READ,
-            Permission.COMPANIES_READ,
-            Permission.OPPORTUNITIES_READ,
-            Permission.ACTIVITIES_READ,
-            Permission.TASKS_READ,
-            Permission.INTEGRATIONS_READ,
-            Permission.KNOWLEDGE_READ,
-            Permission.KNOWLEDGE_CONTEXT,
-            Permission.WORK_READ,
-            Permission.JOBS_READ,
-            Permission.WORKFLOWS_READ,
-            Permission.AI_READ,
-            Permission.AI_USE,
-            Permission.ACTIONS_READ,
-            Permission.OBSERVABILITY_READ,
-        }
-    ),
+    "manager": _MANAGER_PERMISSIONS,
+    "member": _MEMBER_PERMISSIONS,
+    "viewer": _VIEWER_PERMISSIONS,
 }
 
 
