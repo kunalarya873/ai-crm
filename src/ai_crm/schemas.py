@@ -1706,3 +1706,34 @@ class FeatureFlagRead(BaseModel):
     version: int
     updated_by: str | None = None
     updated_at: datetime | None = None
+
+
+class SloRead(BaseModel):
+    key: str
+    description: str
+    unit: str
+    comparison: Literal["lte", "gte"]
+    target: float
+    owner: str
+    status: Literal["met", "breached", "no_data", "not_measured"]
+    value: float | None
+    detail: dict[str, object]
+    reason: str | None
+
+
+class SloReport(BaseModel):
+    window_start: datetime
+    window_end: datetime
+    slos: list[SloRead]
+
+
+class AdminUsageRead(BaseModel):
+    members_by_role: dict[str, int]
+    connections_by_status: dict[str, int]
+    jobs_by_status: dict[str, int]
+    ai_runs: dict[str, int]
+    action_proposals_by_status: dict[str, int]
+    action_executions_by_status: dict[str, int]
+    agent_runs_by_status: dict[str, int]
+    open_alerts: int
+    capabilities: list[FeatureFlagRead]

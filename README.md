@@ -2,7 +2,7 @@
 
 This is the runnable backend for the AI-first CRM and business automation platform described in `Target.md`.
 
-## Current implementation: Backend Phases 1, 2, 3A, 4, 5A, 6A, 7A, 8A, 9A, 9B, and 10A (kill switches)
+## Current implementation: Backend Phases 1, 2, 3A, 4, 5A, 6A, 7A, 8A, 9A, 9B, 10A (kill switches), and 10B (SLOs, usage, runbooks)
 
 The backend currently implements the runtime/security foundation, core CRM vertical slice, provider-neutral integration foundation, permission-aware knowledge retrieval, durable work execution, grounded AI requests, approval-gated action execution, and operational measurement:
 
@@ -327,6 +327,19 @@ PUT /admin/feature-flags/{flag}               admin only; body {"enabled": false
 
 This is the kill-switch part of Phase 10 only. SLOs, load and capacity evidence, retention and export, admin usage views and full runbooks are not built.
 
+### SLOs, usage and runbooks (Phase 10B)
+
+```text
+GET /observability/slos      SLO status, value, target and owner (observability:read)
+GET /admin/usage             per-tenant usage and capability state (admin and manager)
+```
+
+`GET /observability/slos` computes eight SLOs on demand from persisted data: oldest ready job age, job success rate, sync freshness, search freshness, action completion rate, AI fallback rate, AI latency and overdue agent runs. Each carries the owner from `SLO_OWNER` and a status of `met`, `breached`, `no_data` (nothing to measure, never reported as a pass) or `not_measured`. API availability, latency and error rate are listed but always `not_measured`, because the backend keeps no per-request telemetry; use your load balancer or APM for those. SLOs are evaluated when asked, so something external has to poll the endpoint for continuous monitoring. Targets live in `observability/slo.py` (the sync target follows `INTEGRATION_SYNC_INTERVAL_SECONDS`). An empty queue or zero overdue runs is a real measurement and reports `met`; rates with nothing to divide report `no_data`. Queue age includes running jobs whose lease has expired, so a crashed worker shows up. Windows are limited to 31 days.
+
+`docs/runbooks/` has support procedures for failed jobs, syncs and actions, AI output problems, data-access issues, stuck agent runs and the kill switches. `tests/api/test_runbooks.py` checks that every endpoint a runbook names exists in the OpenAPI schema.
+
+Still open in Phase 10: load and capacity evidence, retention/export/delete, tenant-fair worker scheduling and circuit breakers, CI and an expand/contract migration policy.
+
 ## Checks
 
 Run the project checks from this directory:
@@ -341,4 +354,4 @@ uv run --with pyright pyright
 
 ## Next backend slice
 
-Backend Phase 9 is implemented and Phase 10 has its first slice (kill switches). The rest of Backend Phase 10 (SLOs, capacity evidence, retention and export, admin views, runbooks, CI) is next. See `modules/backend/phase-10-scale-and-production-operations.md`.
+Backend Phase 9 is implemented and Phase 10 has kill switches, SLOs, an admin usage view and runbooks. The rest of Backend Phase 10 (capacity evidence, retention and export, tenant-fair scheduling, CI, migration policy) is next. See `modules/backend/phase-10-scale-and-production-operations.md`.

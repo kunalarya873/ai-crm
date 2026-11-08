@@ -42,6 +42,7 @@ class Permission(StrEnum):
     OBSERVABILITY_MANAGE = "observability:manage"
     ADMIN_MEMBERS_READ = "admin:members:read"
     ADMIN_MEMBERS_MANAGE = "admin:members:manage"
+    ADMIN_USAGE_READ = "admin:usage:read"
     ADMIN_FLAGS_READ = "admin:flags:read"
     ADMIN_FLAGS_MANAGE = "admin:flags:manage"
     AGENTS_READ = "agents:read"
@@ -100,6 +101,7 @@ _MANAGER_PERMISSIONS = _MEMBER_PERMISSIONS | {
     Permission.OBSERVABILITY_MANAGE,
     Permission.ADMIN_MEMBERS_READ,
     Permission.ADMIN_FLAGS_READ,
+    Permission.ADMIN_USAGE_READ,
 }
 
 ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {

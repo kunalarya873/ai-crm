@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     agent_repeated_failure_threshold: int = Field(default=2, ge=1)
     agent_cost_per_1k_tokens_micros: int = Field(default=0, ge=0)
     disabled_capabilities: str = ""
+    slo_owner: str = Field(default="platform-oncall", min_length=1)
 
     @property
     def disabled_capability_set(self) -> frozenset[str]:

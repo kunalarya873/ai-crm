@@ -9,12 +9,14 @@ from ..flags import effective_flags, set_flag
 from ..members import add_member, list_members, update_member
 from ..permissions import Permission
 from ..schemas import (
+    AdminUsageRead,
     FeatureFlagRead,
     FeatureFlagUpdate,
     MemberCreate,
     MemberRead,
     MemberUpdate,
 )
+from ..usage import tenant_usage
 from .routes import parse_if_match, set_etag
 
 router = APIRouter()
@@ -104,3 +106,15 @@ async def set_feature_flag_endpoint(
     )
     set_etag(response, result.version)
     return result
+
+
+UsageReadContext = Annotated[
+    RequestContext, Depends(require_permission(Permission.ADMIN_USAGE_READ))
+]
+
+
+@router.get("/admin/usage", response_model=AdminUsageRead, tags=["admin"])
+async def tenant_usage_endpoint(
+    session: SessionDependency, context: UsageReadContext
+) -> AdminUsageRead:
+    return await tenant_usage(session, context)

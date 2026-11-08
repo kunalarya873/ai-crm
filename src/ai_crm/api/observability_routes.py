@@ -17,6 +17,7 @@ from ..observability.service import (
     run_proactive_checks,
     summary,
 )
+from ..observability.slo import evaluate_slos
 from ..permissions import Permission
 from ..schemas import (
     AlertDecision,
@@ -25,6 +26,7 @@ from ..schemas import (
     ObservabilitySummary,
     OperationalEventRead,
     ProactiveCheckResponse,
+    SloReport,
 )
 
 router = APIRouter()
@@ -190,3 +192,15 @@ async def run_proactive_checks_endpoint(
     context: ManageContext,
 ) -> ProactiveCheckResponse:
     return await run_proactive_checks(session, context)
+
+
+@router.get("/observability/slos", response_model=SloReport, tags=["observability"])
+async def observability_slos_endpoint(
+    session: SessionDependency,
+    context: ReadContext,
+    window_start: datetime | None = None,
+    window_end: datetime | None = None,
+) -> SloReport:
+    return await evaluate_slos(
+        session, context, window_start=window_start, window_end=window_end
+    )

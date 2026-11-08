@@ -36,6 +36,7 @@ async def test_role_matrix_is_tiered() -> None:
         Permission.OBSERVABILITY_MANAGE,
         Permission.ADMIN_MEMBERS_READ,
         Permission.ADMIN_FLAGS_READ,
+        Permission.ADMIN_USAGE_READ,
     }
     for denied in (
         Permission.ACTIONS_APPROVE,
