@@ -6,6 +6,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     DateTime,
+    Float,
     Index,
     Integer,
     String,
@@ -84,6 +85,7 @@ class Contact(Base):
     __table_args__ = (
         Index("ix_contacts_tenant_created", "tenant_id", "created_at"),
         Index("ix_contacts_tenant_email", "tenant_id", "email"),
+        Index("ix_contacts_tenant_company", "tenant_id", "company_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
@@ -108,6 +110,7 @@ class Task(Base):
     __table_args__ = (
         Index("ix_tasks_tenant_status", "tenant_id", "status"),
         Index("ix_tasks_tenant_due", "tenant_id", "due_at"),
+        Index("ix_tasks_tenant_opportunity", "tenant_id", "opportunity_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
@@ -709,7 +712,7 @@ class AIRun(Base):
     output: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     output_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     evidence_refs: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
-    confidence: Mapped[float | None] = mapped_column(nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     uncertainty: Mapped[list[str]] = mapped_column(JSON, default=list)
     input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -863,7 +866,7 @@ class MetricObservation(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     tenant_id: Mapped[str] = mapped_column(String(100), nullable=False)
     metric_key: Mapped[str] = mapped_column(String(100), nullable=False)
-    value: Mapped[float] = mapped_column(nullable=False)
+    value: Mapped[float] = mapped_column(Float, nullable=False)
     unit: Mapped[str] = mapped_column(String(30), nullable=False, default="count")
     quality: Mapped[str] = mapped_column(String(30), nullable=False, default="complete")
     dimensions: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
