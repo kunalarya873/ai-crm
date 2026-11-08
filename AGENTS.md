@@ -8,7 +8,7 @@ Canonical, agent-neutral guide for this repository. Every coding agent (Codex, C
 The runnable backend for an AI-first CRM and business-automation platform. Product intent lives in `Target.md` (PRD); the phased delivery plan lives in `modules/`.
 
 - **Stack:** Python ≥ 3.12, FastAPI, async SQLAlchemy 2.x, SQLite (`aiosqlite`) for local/dev, Alembic, Pydantic v2 / `pydantic-settings`, PyJWT. Package manager: **`uv`**.
-- **Status:** Backend Phases 1, 2, 3A, 4, 5A, 6A, 7A, 8A, 9A, 9B are implemented, plus Phase 10A kill switches, 10B SLOs/usage/runbooks and 10C audit lookup/export/telemetry purge (~15k lines in `src/`). **Next slice: the rest of Phase 10 (capacity evidence, tenant-fair scheduling, CI)** (`modules/backend/phase-10-scale-and-production-operations.md`).
+- **Status:** Backend Phases 1, 2, 3A, 4, 5A, 6A, 7A, 8A, 9A, 9B are implemented, plus Phase 10A kill switches, 10B SLOs/usage/runbooks and 10C audit lookup/export/telemetry purge and 10D worker fairness/breaker/backpressure (~15k lines in `src/`). **Next slice: the rest of Phase 10 (capacity evidence, CI, migration policy)** (`modules/backend/phase-10-scale-and-production-operations.md`).
 - **Local-only boundaries:** the only AI provider is the deterministic `fixture` adapter (no external model calls), the only integration provider is `fixture`, and JWT auth uses a local dev secret. None of this is production-ready; do not describe it as such.
 
 ## 2. Commands
@@ -60,7 +60,7 @@ src/ai_crm/
                      deps.py = RequestContext, get_request_context, require_permission
   knowledge/         Source registry, versioned indexing jobs, permission-aware lexical retrieval, context assembly
   work/              Work items, durable jobs (leases/retries/dead-letter), allowlisted workflows;
-                     handlers.py = job-type allowlist, runner.py = opt-in in-process worker (WORKER_ENABLED)
+                     handlers.py = job-type allowlist, runner.py = opt-in in-process worker (WORKER_ENABLED; rotating tenant order, per-tenant time budget); breaker.py = in-process connector circuit breaker; create_job sheds with 429 at MAX_QUEUED_JOBS_PER_TENANT
   ai/                Gateway, provider adapters (fixture), JSON prompt catalog, typed use cases
   actions/           Typed action registry, proposals, approval, execution, reconciliation
   observability/     Operational events, metrics, proactive checks, alerts, telemetry redaction; slo.py = SLO definitions (owner from SLO_OWNER) and on-demand evaluation

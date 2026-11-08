@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -9,18 +10,32 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from ..agents import expire_overdue_runs
 from ..api.deps import RequestContext
 from ..config import settings
-from ..domain import CapabilityDisabledError, ConflictError, DomainError, InvalidRequestError
+from ..domain import (
+    BackpressureError,
+    CapabilityDisabledError,
+    ConflictError,
+    DomainError,
+    InvalidRequestError,
+)
 from ..flags import disabled_flags, is_enabled
 from ..integrations import (
     TRANSIENT_PROVIDER_CODES,
     ConnectorProviderError,
     refresh_connection,
 )
-from ..models import IntegrationConnection, IntegrationSyncRun, Organization, utc_now
+from ..models import (
+    DurableJob,
+    IntegrationConnection,
+    IntegrationSyncRun,
+    Organization,
+    WebhookEvent,
+    utc_now,
+)
 from ..observability.service import run_proactive_checks
 from ..permissions import Permission
 from ..schemas import JobCreate, JobFailureRequest
-from .handlers import HANDLERS
+from .breaker import CircuitBreaker
+from .handlers import HANDLERS, SyncFailedError
 from .jobs import (
     claim_next_job,
     complete_job,
@@ -37,6 +52,28 @@ WORKER_ID = f"worker-{uuid4().hex[:12]}"
 QUEUE = "default"
 LEASE_GRACE_SECONDS = 30
 CONNECTOR_JOB_TYPES = frozenset({"integration.sync", "integration.webhook"})
+
+# While any provider's breaker is open, connector jobs stay queued: the claim cannot filter by
+# provider, so with several providers one outage pauses all connector jobs until it cools down.
+connector_breaker = CircuitBreaker(
+    settings.connector_breaker_failures, settings.connector_breaker_cooldown_seconds
+)
+_tick_counter = 0
+
+
+async def _job_provider(session: AsyncSession, tenant_id: str, job: DurableJob) -> str:
+    statement = select(IntegrationConnection.provider_key).where(
+        IntegrationConnection.tenant_id == tenant_id
+    )
+    if job.payload.get("connection_id") is not None:
+        statement = statement.where(IntegrationConnection.id == str(job.payload["connection_id"]))
+    elif job.payload.get("event_id") is not None:
+        statement = statement.join(
+            WebhookEvent, WebhookEvent.connection_id == IntegrationConnection.id
+        ).where(WebhookEvent.id == str(job.payload["event_id"]))
+    else:
+        return "unknown"
+    return await session.scalar(statement) or "unknown"
 
 
 def _aware(value: datetime) -> datetime:
@@ -69,6 +106,8 @@ async def _run_one(
         if "connectors" in await disabled_flags(session, tenant_id):
             # Left queued, not failed, so the work resumes when the switch is turned back on.
             job_types -= CONNECTOR_JOB_TYPES
+        if connector_breaker.blocked():
+            job_types -= CONNECTOR_JOB_TYPES
         job = await claim_next_job(
             session,
             claim_context,
@@ -81,6 +120,10 @@ async def _run_one(
         if job is None:
             return False
         job_id, job_type, timeout_seconds = job.id, job.job_type, job.timeout_seconds
+        provider = None
+        if job_type in CONNECTOR_JOB_TYPES:
+            provider = await _job_provider(session, tenant_id, job)
+            connector_breaker.start_probe(provider)
         trace_id = job.trace_id or uuid4().hex
         claim_context = _context(tenant_id, _CONTROL, trace_id)
         await heartbeat_job(
@@ -111,6 +154,11 @@ async def _run_one(
                 )
         except Exception as error:
             timed_out = isinstance(error, TimeoutError) and timeout_scope.expired()
+            if provider is not None:
+                if isinstance(error, SyncFailedError) or timed_out:
+                    connector_breaker.record_failure(provider)
+                else:
+                    connector_breaker.release(provider)
             code = "job_timeout" if timed_out else type(error).__name__
             retryable = isinstance(error, CapabilityDisabledError) or not (
                 isinstance(error, InvalidRequestError)
@@ -126,6 +174,8 @@ async def _run_one(
                 ),
             )
             return True
+        if provider is not None:
+            connector_breaker.record_success(provider)
         await complete_job(session, claim_context, job_id, WORKER_ID, result)
         return True
 
@@ -186,6 +236,10 @@ async def enqueue_scheduled_syncs(
                     f"sync:{connection_id}:{bucket}",
                 )
                 enqueued += 1
+            except BackpressureError:
+                await session.rollback()
+                logger.warning("job backlog full for tenant %s; sync scheduling skipped", tenant_id)
+                break
             except Exception:
                 await session.rollback()
                 logger.exception("could not schedule sync for connection %s", connection_id)
@@ -198,10 +252,21 @@ async def run_tick(
     run_proactive: bool = False,
     schedule_syncs: bool = False,
     failures: list[str] | None = None,
+    start_offset: int | None = None,
 ) -> int:
-    """Process ready jobs for every tenant once; return the number of jobs handled."""
+    """Process ready jobs for every tenant once; return the number of jobs handled.
+
+    The tenant order rotates every tick and each tenant has a time budget, so no tenant is
+    always served last and a slow tenant cannot hold the pass for the others."""
+    global _tick_counter
     async with factory() as session:
-        tenant_ids = list(await session.scalars(select(Organization.id)))
+        tenant_ids = sorted(await session.scalars(select(Organization.id)))
+    if start_offset is None:
+        start_offset = _tick_counter
+        _tick_counter += 1
+    if tenant_ids:
+        pivot = start_offset % len(tenant_ids)
+        tenant_ids = tenant_ids[pivot:] + tenant_ids[:pivot]
     handled = 0
     for tenant_id in tenant_ids:
         try:
@@ -209,10 +274,14 @@ async def run_tick(
                 await reconcile_expired_jobs(session, _context(tenant_id, _CONTROL))
             if schedule_syncs:
                 await enqueue_scheduled_syncs(factory, tenant_id, utc_now())
+            started = time.monotonic()
             for _ in range(settings.worker_batch_size):
                 if not await _run_one(factory, tenant_id):
                     break
                 handled += 1
+                if time.monotonic() - started >= settings.worker_tenant_time_budget_seconds:
+                    logger.debug("tenant %s used its time budget this tick", tenant_id)
+                    break
             async with factory() as session:
                 await expire_overdue_runs(session, _context(tenant_id, frozenset()))
             if run_proactive:

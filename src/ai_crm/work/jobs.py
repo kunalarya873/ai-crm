@@ -5,14 +5,14 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..api.deps import RequestContext
 from ..audit import record_audit, record_outbox_event
 from ..config import settings
-from ..domain import ConflictError, InvalidRequestError, NotFoundError
+from ..domain import BackpressureError, ConflictError, InvalidRequestError, NotFoundError
 from ..models import DurableJob, ReminderDelivery, utc_now
 from ..schemas import JobCreate, JobFailureRequest
 from .domain import JOB_TYPES
@@ -132,6 +132,32 @@ async def create_job_in_session(
     return job
 
 
+async def _enforce_backlog_limit(
+    session: AsyncSession, context: RequestContext, idempotency_key: str
+) -> None:
+    """Shed new work when the tenant's backlog is full. A duplicate key still returns the original.
+
+    Only API and scheduler submissions are limited: webhook and reminder jobs are never dropped."""
+    if not idempotency_key.strip():
+        return
+    existing = await session.scalar(
+        select(DurableJob.id).where(
+            DurableJob.tenant_id == context.tenant_id,
+            DurableJob.idempotency_key == idempotency_key,
+        )
+    )
+    if existing is not None:
+        return
+    backlog = await session.scalar(
+        select(func.count()).where(
+            DurableJob.tenant_id == context.tenant_id,
+            DurableJob.status.in_({"queued", "retryable"}),
+        )
+    )
+    if int(backlog or 0) >= settings.max_queued_jobs_per_tenant:
+        raise BackpressureError("The job backlog is full; retry later")
+
+
 async def create_job(
     session: AsyncSession,
     context: RequestContext,
@@ -139,6 +165,7 @@ async def create_job(
     idempotency_key: str,
 ) -> DurableJob:
     hash_run_at = payload.run_at or datetime(1970, 1, 1, tzinfo=UTC)
+    await _enforce_backlog_limit(session, context, idempotency_key)
     request_hash = _hash_request(
         job_type=payload.job_type,
         queue=payload.queue,

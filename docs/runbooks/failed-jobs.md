@@ -13,7 +13,15 @@
      leases (the worker also does this every tick).
 5. If `integration.*` jobs are simply waiting, check whether the `connectors` kill switch is on:
    `GET /admin/feature-flags`. Jobs stay `queued` while it is off and run when it is turned back on.
-6. A queue that stays old with no failures usually means the worker is not running
+6. `POST /jobs` returning `429 backpressure` means the tenant already has
+   `MAX_QUEUED_JOBS_PER_TENANT` queued or retryable jobs. Wait for `Retry-After` and let the worker
+   drain the backlog; do not raise the limit to hide a stuck queue. A repeat of the same
+   `Idempotency-Key` still returns the original job.
+7. Connector jobs waiting with no kill switch and no failures usually mean the provider circuit
+   breaker is open: after `CONNECTOR_BREAKER_FAILURES` transient sync failures in a row, connector
+   jobs stay queued for `CONNECTOR_BREAKER_COOLDOWN_SECONDS`, then one job probes. The state is in
+   the worker process only; restarting the worker resets it.
+8. A queue that stays old with no failures usually means the worker is not running
    (`WORKER_ENABLED=false`, or the process is down). Restart it; jobs are leased, so nothing is lost.
 
 Job types with no handler (for example `reminder.dispatch`) stay `queued` on purpose until an

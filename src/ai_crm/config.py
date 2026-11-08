@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     worker_enabled: bool = False
     worker_poll_seconds: float = Field(default=5.0, gt=0)
     worker_batch_size: int = Field(default=10, ge=1)
+    worker_tenant_time_budget_seconds: float = Field(default=30.0, gt=0)
+    connector_breaker_failures: int = Field(default=5, ge=1)
+    connector_breaker_cooldown_seconds: float = Field(default=60.0, gt=0)
+    max_queued_jobs_per_tenant: int = Field(default=1000, ge=1)
     proactive_check_interval_seconds: int = Field(default=300, ge=1)
     integration_sync_interval_seconds: int = Field(default=900, ge=1)
     agent_max_depth_cap: int = Field(default=3, ge=1)

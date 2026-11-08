@@ -41,6 +41,10 @@ class CapabilityDisabledError(DomainError):
     pass
 
 
+class BackpressureError(DomainError):
+    """The tenant's job backlog is full; the caller should retry later."""
+
+
 class ContactStatus(StrEnum):
     LEAD = "lead"
     QUALIFIED = "qualified"

@@ -21,6 +21,7 @@ from .api.work_routes import router as work_router
 from .config import settings
 from .db import SessionFactory, close_database, create_tables, seed_local_identity
 from .domain import (
+    BackpressureError,
     CapabilityDisabledError,
     ConflictError,
     DomainError,
@@ -57,6 +58,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
                 await worker_task
     await close_database()
 
+
+BACKPRESSURE_RETRY_AFTER_SECONDS = 30
 
 app = FastAPI(
     title=settings.app_name,
@@ -142,6 +145,8 @@ async def domain_error_handler(request: Request, error: DomainError) -> JSONResp
         status_code, code = 409, "invalid_transition"
     elif isinstance(error, CapabilityDisabledError):
         status_code, code = 503, "capability_disabled"
+    elif isinstance(error, BackpressureError):
+        status_code, code = 429, "backpressure"
     elif isinstance(error, PermissionDeniedError):
         status_code, code = 403, "permission_denied"
     elif isinstance(error, SeparationOfDutiesError):
@@ -156,6 +161,8 @@ async def domain_error_handler(request: Request, error: DomainError) -> JSONResp
         status_code=status_code,
         content={"code": code, "detail": str(error), "correlation_id": correlation_id},
     )
+    if isinstance(error, BackpressureError):
+        response.headers["Retry-After"] = str(BACKPRESSURE_RETRY_AFTER_SECONDS)
     if correlation_id:
         response.headers["X-Correlation-ID"] = correlation_id
     return response
