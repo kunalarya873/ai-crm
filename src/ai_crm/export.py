@@ -56,14 +56,15 @@ async def export_rows(
         await session.scalars(statement.order_by(order.desc(), model.id.desc()).limit(limit + 1))
     ).all()
     items = rows[:limit]
+    serialized = [schema.model_validate(row).model_dump(mode="json") for row in items]
     await record_audit(
         session,
         context,
         "export.read",
         "export",
         resource,
-        details={"resource": resource, "rows": len(items)},
+        details={"resource": resource, "rows": len(serialized)},
     )
     await session.commit()
     next_cursor = _encode(model, items[-1]) if len(rows) > limit else None
-    return [schema.model_validate(row).model_dump(mode="json") for row in items], next_cursor
+    return serialized, next_cursor

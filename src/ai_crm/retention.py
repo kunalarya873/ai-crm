@@ -62,12 +62,14 @@ async def purge_telemetry(
                 select(model.id).where(scope).order_by(order_column, model.id).limit(batch)
             )
         ).all()
+        deleted = 0
         if ids:
-            await session.execute(
+            result = await session.execute(
                 delete(model).where(model.tenant_id == tenant_id, model.id.in_(ids))
             )
-        counts[name] = len(ids)
-        truncated = truncated or total > len(ids)
+            deleted = int(getattr(result, "rowcount", 0) or 0)
+        counts[name] = deleted
+        truncated = truncated or total > deleted
     if not payload.dry_run:
         await record_audit(
             session,

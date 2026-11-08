@@ -394,3 +394,32 @@ async def test_audit_query_accepts_naive_timestamps_as_utc(client: AsyncClient) 
     )
 
     assert response.status_code == 200 and len(response.json()) >= 1
+
+
+async def test_activity_export_pages_cover_every_row_once(client: AsyncClient) -> None:
+    contact_id = (await make_contacts(client, 1))[0]
+    ids = []
+    for index in range(5):
+        response = await client.post(
+            f"{API}/activities",
+            headers=headers("user-d"),
+            json={"kind": "note", "subject": f"Note {index}", "contact_id": contact_id},
+        )
+        assert response.status_code == 201, response.text
+        ids.append(response.json()["id"])
+
+    exported: list[str] = []
+    cursor = None
+    for _ in range(10):
+        params: dict[str, str | int] = {"limit": 2}
+        if cursor:
+            params["cursor"] = cursor
+        response = await client.get(
+            f"{API}/admin/export/activities", headers=headers("user-d"), params=params
+        )
+        exported += [row["id"] for row in response.json()]
+        cursor = response.headers.get("X-Next-Cursor")
+        if cursor is None:
+            break
+
+    assert sorted(exported) == sorted(ids)
