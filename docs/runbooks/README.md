@@ -17,6 +17,8 @@ Start with the signal:
 | An incident needs a capability stopped now | [kill-switches.md](kill-switches.md) |
 | An audit question, a customer export request, or telemetry growth | [data-lifecycle.md](data-lifecycle.md) |
 
+Schema changes and rollbacks follow [../migrations.md](../migrations.md).
+
 Read the current SLOs with `GET /observability/slos` (owner is `SLO_OWNER`). The three API SLOs
 (availability, latency, error rate) report `not_measured`: there is no per-request telemetry yet,
 so use your load balancer or APM for those.

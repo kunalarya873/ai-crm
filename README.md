@@ -2,7 +2,7 @@
 
 This is the runnable backend for the AI-first CRM and business automation platform described in `Target.md`.
 
-## Current implementation: Backend Phases 1, 2, 3A, 4, 5A, 6A, 7A, 8A, 9A, 9B, 10A (kill switches), 10B (SLOs, usage, runbooks), 10C (audit lookup, export, telemetry retention), and 10D (worker fairness, circuit breaker, backpressure)
+## Current implementation: Backend Phases 1, 2, 3A, 4, 5A, 6A, 7A, 8A, 9A, 9B, 10A (kill switches), 10B (SLOs, usage, runbooks), 10C (audit lookup, export, telemetry retention), 10D (worker fairness, circuit breaker, backpressure), and 10E (CI, migration tests, migration policy)
 
 The backend currently implements the runtime/security foundation, core CRM vertical slice, provider-neutral integration foundation, permission-aware knowledge retrieval, durable work execution, grounded AI requests, approval-gated action execution, and operational measurement:
 
@@ -352,7 +352,11 @@ The purge deletes only operational events, metric observations, resolved alerts 
 
 The worker rotates the tenant order every tick and gives each tenant at most `WORKER_BATCH_SIZE` jobs and `WORKER_TENANT_TIME_BUDGET_SECONDS` of job processing per tick (a running job always finishes; reconciliation, sync scheduling and proactive checks are not budgeted). A per-provider circuit breaker opens after `CONNECTOR_BREAKER_FAILURES` consecutive transient sync failures; while it is open (`CONNECTOR_BREAKER_COOLDOWN_SECONDS`) connector jobs stay queued without using an attempt, then a single job probes. Timeouts count as failures. `POST /jobs` and scheduled syncs are shed with `429 backpressure` and `Retry-After` once a tenant has `MAX_QUEUED_JOBS_PER_TENANT` queued or retryable jobs; the limit is soft (concurrent requests can overshoot it slightly), a repeated idempotency key still returns the original job, and webhook and reminder jobs are never dropped. Limits: breaker state lives in one worker process, so several workers each trip on their own; the job claim cannot filter by provider, so with more than one provider an outage pauses all connector jobs; there is no per-provider rate limiting; and none of this has been load tested.
 
-Still open in Phase 10: load and capacity evidence, CI and an expand/contract migration policy.
+### CI and migrations (Phase 10E)
+
+`.github/workflows/ci.yml` runs ruff, pytest, pyright and the Alembic round-trip (`upgrade head`, `check`, `downgrade base`) on pushes to `main` and on pull requests. It has not been executed on GitHub yet; every command in it was run locally. `tests/test_migrations.py` makes the same guarantees part of the suite: one migration head, upgrade then downgrade then upgrade, models matching migrations (so a model change without a revision fails), and revision ids short enough for Postgres. The parity test found real drift, fixed by migration `0015` (`workflow_transitions.reason` widened to `Text` to match the 5000-character API limit) and by declaring two existing indexes in the models. `docs/migrations.md` has the expand/contract policy, deploy order and rollback procedure. All of it is exercised on SQLite only: Postgres zero-downtime behaviour, deployment smoke tests and load tests are not covered.
+
+Still open in Phase 10: load and capacity evidence, per-request telemetry, a Postgres test lane and record deletion.
 
 ## Checks
 
