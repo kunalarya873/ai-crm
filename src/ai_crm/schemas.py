@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -1737,3 +1737,34 @@ class AdminUsageRead(BaseModel):
     agent_runs_by_status: dict[str, int]
     open_alerts: int
     capabilities: list[FeatureFlagRead]
+
+
+class AuditEventRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    actor_id: str
+    action: str
+    entity_type: str
+    entity_id: str
+    outcome: str
+    reason: str | None
+    correlation_id: str
+    details: dict[str, Any]
+    created_at: datetime
+
+
+class RetentionPurgeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    older_than_days: int | None = Field(default=None, ge=1, le=3650)
+    dry_run: bool = True
+
+
+class RetentionPurgeResult(BaseModel):
+    dry_run: bool
+    cutoff: datetime
+    older_than_days: int
+    counts: dict[str, int]
+    batch_limit: int
+    truncated: bool

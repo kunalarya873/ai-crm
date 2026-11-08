@@ -25,6 +25,9 @@ async def test_role_matrix_is_tiered() -> None:
     assert Permission.AGENTS_MANAGE not in manager
     assert Permission.AGENTS_EVALUATE not in manager
     assert Permission.ADMIN_FLAGS_MANAGE not in manager
+    assert Permission.ADMIN_AUDIT_READ not in manager
+    assert Permission.ADMIN_EXPORT not in manager
+    assert Permission.ADMIN_RETENTION_MANAGE not in manager
     assert Permission.AGENTS_RUN in member and Permission.AGENTS_RUN not in viewer
     assert Permission.AGENTS_READ in viewer
     assert viewer < member < manager < admin
@@ -47,6 +50,9 @@ async def test_role_matrix_is_tiered() -> None:
         Permission.OBSERVABILITY_MANAGE,
         Permission.ADMIN_MEMBERS_READ,
         Permission.ADMIN_MEMBERS_MANAGE,
+        Permission.ADMIN_AUDIT_READ,
+        Permission.ADMIN_EXPORT,
+        Permission.ADMIN_RETENTION_MANAGE,
     ):
         assert denied not in member
 

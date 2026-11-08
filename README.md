@@ -2,7 +2,7 @@
 
 This is the runnable backend for the AI-first CRM and business automation platform described in `Target.md`.
 
-## Current implementation: Backend Phases 1, 2, 3A, 4, 5A, 6A, 7A, 8A, 9A, 9B, 10A (kill switches), and 10B (SLOs, usage, runbooks)
+## Current implementation: Backend Phases 1, 2, 3A, 4, 5A, 6A, 7A, 8A, 9A, 9B, 10A (kill switches), 10B (SLOs, usage, runbooks), and 10C (audit lookup, export, telemetry retention)
 
 The backend currently implements the runtime/security foundation, core CRM vertical slice, provider-neutral integration foundation, permission-aware knowledge retrieval, durable work execution, grounded AI requests, approval-gated action execution, and operational measurement:
 
@@ -338,7 +338,17 @@ GET /admin/usage             per-tenant usage and capability state (admin and ma
 
 `docs/runbooks/` has support procedures for failed jobs, syncs and actions, AI output problems, data-access issues, stuck agent runs and the kill switches. `tests/api/test_runbooks.py` checks that every endpoint a runbook names exists in the OpenAPI schema.
 
-Still open in Phase 10: load and capacity evidence, retention/export/delete, tenant-fair worker scheduling and circuit breakers, CI and an expand/contract migration policy.
+### Data lifecycle (Phase 10C)
+
+```text
+GET  /admin/audit-events          audit investigation, filterable, keyset-paginated (admin)
+GET  /admin/export/{resource}     paginated JSON export of contacts, companies, opportunities, activities, tasks (admin)
+POST /admin/retention/purge       purge aged telemetry; dry run by default (admin)
+```
+
+The purge deletes only operational events, metric observations, resolved alerts and published outbox rows older than `OBSERVABILITY_RETENTION_DAYS` (a lower cutoff is rejected), at most `RETENTION_PURGE_BATCH_SIZE` rows per table per call. Audit events and CRM records are never purged. Not built: deleting contacts or tenants, legal hold, archival, signed or asynchronous export files, and an automatic scheduled purge. Export is one JSON page per request in the same shape as the API read schemas (including `archived_at` and `version`); `OBSERVABILITY_RETENTION_DAYS` must now be at least 1; reading the audit log writes an `audit.queried` row, so polling it grows the audit table; members, connections and knowledge are not exported.
+
+Still open in Phase 10: load and capacity evidence, tenant-fair worker scheduling and circuit breakers, CI and an expand/contract migration policy.
 
 ## Checks
 
@@ -354,4 +364,4 @@ uv run --with pyright pyright
 
 ## Next backend slice
 
-Backend Phase 9 is implemented and Phase 10 has kill switches, SLOs, an admin usage view and runbooks. The rest of Backend Phase 10 (capacity evidence, retention and export, tenant-fair scheduling, CI, migration policy) is next. See `modules/backend/phase-10-scale-and-production-operations.md`.
+Backend Phase 9 is implemented and Phase 10 has kill switches, SLOs, an admin usage view and runbooks. The rest of Backend Phase 10 (capacity evidence, tenant-fair scheduling, CI, migration policy) is next. See `modules/backend/phase-10-scale-and-production-operations.md`.

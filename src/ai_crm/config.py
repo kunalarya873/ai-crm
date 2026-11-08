@@ -41,7 +41,8 @@ class Settings(BaseSettings):
     action_max_attempts: int = 3
     proactive_inactive_opportunity_days: int = 30
     proactive_alert_suppression_minutes: int = 60
-    observability_retention_days: int = 90
+    observability_retention_days: int = Field(default=90, ge=1)
+    retention_purge_batch_size: int = Field(default=1000, ge=1, le=10000)
     worker_enabled: bool = False
     worker_poll_seconds: float = Field(default=5.0, gt=0)
     worker_batch_size: int = Field(default=10, ge=1)

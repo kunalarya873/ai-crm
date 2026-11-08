@@ -15,6 +15,7 @@ Start with the signal:
 | A user cannot see or change something, or sees something they should not | [data-access-issues.md](data-access-issues.md) |
 | `agent_overdue_runs` breached; an agent run is stuck or escalated | [stuck-agent-runs.md](stuck-agent-runs.md) |
 | An incident needs a capability stopped now | [kill-switches.md](kill-switches.md) |
+| An audit question, a customer export request, or telemetry growth | [data-lifecycle.md](data-lifecycle.md) |
 
 Read the current SLOs with `GET /observability/slos` (owner is `SLO_OWNER`). The three API SLOs
 (availability, latency, error rate) report `not_measured`: there is no per-request telemetry yet,

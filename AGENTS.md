@@ -8,7 +8,7 @@ Canonical, agent-neutral guide for this repository. Every coding agent (Codex, C
 The runnable backend for an AI-first CRM and business-automation platform. Product intent lives in `Target.md` (PRD); the phased delivery plan lives in `modules/`.
 
 - **Stack:** Python ≥ 3.12, FastAPI, async SQLAlchemy 2.x, SQLite (`aiosqlite`) for local/dev, Alembic, Pydantic v2 / `pydantic-settings`, PyJWT. Package manager: **`uv`**.
-- **Status:** Backend Phases 1, 2, 3A, 4, 5A, 6A, 7A, 8A, 9A, 9B are implemented, plus Phase 10A kill switches and 10B SLOs/usage/runbooks (~15k lines in `src/`). **Next slice: the rest of Phase 10 (capacity evidence, retention/export, tenant-fair scheduling, CI)** (`modules/backend/phase-10-scale-and-production-operations.md`).
+- **Status:** Backend Phases 1, 2, 3A, 4, 5A, 6A, 7A, 8A, 9A, 9B are implemented, plus Phase 10A kill switches, 10B SLOs/usage/runbooks and 10C audit lookup/export/telemetry purge (~15k lines in `src/`). **Next slice: the rest of Phase 10 (capacity evidence, tenant-fair scheduling, CI)** (`modules/backend/phase-10-scale-and-production-operations.md`).
 - **Local-only boundaries:** the only AI provider is the deterministic `fixture` adapter (no external model calls), the only integration provider is `fixture`, and JWT auth uses a local dev secret. None of this is production-ready; do not describe it as such.
 
 ## 2. Commands
@@ -48,6 +48,7 @@ src/ai_crm/
   domain.py          DomainError hierarchy, status enums, allowed-transition tables
   members.py         Tenant member/role administration (last-admin protection)
   usage.py           Phase 10B per-tenant admin usage read model (GET /admin/usage)
+  audit_query.py / export.py / retention.py   Phase 10C: audit lookup, tenant export, telemetry-only purge (never audit events or CRM rows); admin-only
   flags.py           Phase 10A kill switches: ai/workflows/connectors/agents, tenant flags + DISABLED_CAPABILITIES; call require_capability() before *new* work, never on reads or wind-down
   pagination.py      Keyset cursor helpers for list endpoints
   permissions.py     Permission enum + ROLE_PERMISSIONS (admin = all; manager = member + approve/recover/integration-write/sensitive/observability-manage + read members, explicit allowlist; member = read/write CRM + propose/execute actions; viewer = read-only + AI use; only admin has `integrations:manage`, `admin:members:manage` and `agents:manage`, `agents:evaluate` and `admin:flags:manage` (managers read flags); viewers read agents, members and managers run them)
