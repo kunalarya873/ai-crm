@@ -11,3 +11,5 @@ htmlcov/
 *.sqlite3
 .agents/
 .claude/
+*.db-wal
+*.db-shm

@@ -31,11 +31,10 @@ from sqlalchemy import event, text  # noqa: E402
 from sqlalchemy.ext.asyncio import (  # noqa: E402
     AsyncSession,
     async_sessionmaker,
-    create_async_engine,
 )
 
 from ai_crm.auth import create_access_token  # noqa: E402
-from ai_crm.db import get_session  # noqa: E402
+from ai_crm.db import build_engine, get_session  # noqa: E402
 from ai_crm.main import app  # noqa: E402
 from ai_crm.models import Base, Membership, Organization, User  # noqa: E402
 from ai_crm.permissions import Permission  # noqa: E402
@@ -374,14 +373,20 @@ def explain_plans(statements: dict[str, tuple[str, Any]], connection: Any) -> li
     return findings
 
 
-async def run(profile_name: str, ops: int | None, concurrency: int | None, seed_value: int,
-              explain: bool) -> dict[str, Any]:
+async def run(
+    profile_name: str,
+    ops: int | None,
+    concurrency: int | None,
+    seed_value: int,
+    explain: bool,
+    sqlite_mode: str = "default",
+) -> dict[str, Any]:
     profile = PROFILES[profile_name]
     rng = random.Random(seed_value)
     tenants = [f"load-{number}" for number in range(len(profile.tenant_weights))]
     with tempfile.TemporaryDirectory() as directory:
         database = Path(directory) / "load.db"
-        engine = create_async_engine(f"sqlite+aiosqlite:///{database}")
+        engine = build_engine(f"sqlite+aiosqlite:///{database}", wal=sqlite_mode == "wal")
         factory = async_sessionmaker(engine, expire_on_commit=False)
         async with engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
@@ -449,6 +454,7 @@ async def run(profile_name: str, ops: int | None, concurrency: int | None, seed_
         size_mb = round(database.stat().st_size / 1_048_576, 2) if database.exists() else 0.0
     return {
         "profile": profile_name,
+        "sqlite_mode": sqlite_mode,
         "seed": seed_value,
         "ops": ops or profile.ops,
         "concurrency": concurrency or profile.concurrency,
@@ -474,9 +480,11 @@ async def run(profile_name: str, ops: int | None, concurrency: int | None, seed_
 
 def render(report: dict[str, Any]) -> str:
     lines = [
-        f"profile={report['profile']} ops={report['ops']} concurrency={report['concurrency']} "
+        f"profile={report['profile']} sqlite={report['sqlite_mode']} ops={report['ops']} "
+        f"concurrency={report['concurrency']} "
         f"wall={report['wall_seconds']}s db={report['database_mb']}MB",
-        f"{'operation':<18}{'count':>7}{'err':>5}{'req/s':>9}{'p50':>9}{'p95':>9}{'p99':>9}{'max':>9}",
+        f"{'operation':<18}{'count':>7}{'err':>5}{'req/s':>9}"
+        f"{'p50':>9}{'p95':>9}{'p99':>9}{'max':>9}",
     ]
     for name, row in report["operations"].items():
         lines.append(
@@ -511,10 +519,17 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--json", dest="json_path")
     parser.add_argument("--explain", action="store_true")
+    parser.add_argument("--sqlite-mode", choices=["default", "wal"], default="default")
     arguments = parser.parse_args()
     report = asyncio.run(
-        run(arguments.profile, arguments.ops, arguments.concurrency, arguments.seed,
-            arguments.explain)
+        run(
+            arguments.profile,
+            arguments.ops,
+            arguments.concurrency,
+            arguments.seed,
+            arguments.explain,
+            arguments.sqlite_mode,
+        )
     )
     print(render(report))
     if arguments.json_path:

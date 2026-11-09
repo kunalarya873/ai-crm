@@ -8,7 +8,7 @@ Canonical, agent-neutral guide for this repository. Every coding agent (Codex, C
 The runnable backend for an AI-first CRM and business-automation platform. Product intent lives in `Target.md` (PRD); the phased delivery plan lives in `modules/`.
 
 - **Stack:** Python ≥ 3.12, FastAPI, async SQLAlchemy 2.x, SQLite (`aiosqlite`) for local/dev, Alembic, Pydantic v2 / `pydantic-settings`, PyJWT. Package manager: **`uv`**.
-- **Status:** Backend Phases 1, 2, 3A, 4, 5A, 6A, 7A, 8A, 9A, 9B are implemented, plus Phase 10A kill switches, 10B SLOs/usage/runbooks and 10C audit lookup/export/telemetry purge and 10D worker fairness/breaker/backpressure 10E CI/migration tests/policy 10F local load harness and 10G worker discovery (~15k lines in `src/`). **Next slice: the rest of Phase 10 (Postgres/multi-process capacity evidence, write-path tail latency from docs/capacity.md, per-request telemetry)** (`modules/backend/phase-10-scale-and-production-operations.md`).
+- **Status:** Backend Phases 1, 2, 3A, 4, 5A, 6A, 7A, 8A, 9A, 9B are implemented, plus Phase 10A kill switches, 10B SLOs/usage/runbooks and 10C audit lookup/export/telemetry purge and 10D worker fairness/breaker/backpressure 10E CI/migration tests/policy 10F local load harness 10G worker discovery and 10H SQLite WAL experiment (opt-in `SQLITE_WAL`) (~15k lines in `src/`). **Next slice: the rest of Phase 10 (Postgres/multi-process capacity evidence, remaining write-path tail latency (WAL helped writes but hurt reads; see docs/capacity.md), per-request telemetry)** (`modules/backend/phase-10-scale-and-production-operations.md`).
 - **Local-only boundaries:** the only AI provider is the deterministic `fixture` adapter (no external model calls), the only integration provider is `fixture`, and JWT auth uses a local dev secret. None of this is production-ready; do not describe it as such.
 
 ## 2. Commands
@@ -42,7 +42,7 @@ src/ai_crm/
   main.py            App factory, router mounting, correlation-ID middleware, security headers,
                      DomainError -> HTTP mapping (the single place status codes are decided)
   config.py          Settings (pydantic-settings; env/.env). Every new knob is added here AND in .env.example
-  db.py              Async engine/session, create_tables, seed_local_identity
+  db.py              Async engine/session, create_tables, seed_local_identity, configure_sqlite (busy_timeout; opt-in WAL via SQLITE_WAL)
   models.py          All SQLAlchemy models (single Base)
   schemas.py         Pydantic request/response schemas
   domain.py          DomainError hierarchy, status enums, allowed-transition tables

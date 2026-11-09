@@ -1,7 +1,9 @@
 from collections.abc import AsyncIterator
+from typing import Any
 
-from sqlalchemy import select, text
+from sqlalchemy import event, select, text
 from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
@@ -10,7 +12,41 @@ from sqlalchemy.ext.asyncio import (
 from .config import settings
 from .models import Base, Membership, Organization, User
 
-engine = create_async_engine(settings.database_url, echo=settings.debug)
+
+def configure_sqlite(engine: AsyncEngine, *, wal: bool) -> None:
+    """SQLite-only connection tuning; other databases are left untouched.
+
+    The journal mode is stored in the database file, so each connection reads it and switches only
+    when it differs from the setting (this also reverts a file left in WAL by an earlier run).
+    WAL lets readers proceed during a write and, with synchronous=NORMAL, avoids an fsync of the
+    journal and the database on every commit; it is not safe on network filesystems. The busy
+    timeout stays at Python's sqlite3 default of 5 seconds."""
+    if not engine.url.get_backend_name().startswith("sqlite"):
+        return
+    wanted = "wal" if wal else "delete"
+
+    def apply(dbapi_connection: Any, connection_record: Any) -> None:
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA journal_mode")
+            current = str(cursor.fetchone()[0]).lower()
+            if current != wanted:
+                cursor.execute(f"PRAGMA journal_mode={wanted}")
+            if wal:
+                cursor.execute("PRAGMA synchronous=NORMAL")
+        finally:
+            cursor.close()
+
+    event.listen(engine.sync_engine, "connect", apply)
+
+
+def build_engine(url: str, *, wal: bool, echo: bool = False) -> AsyncEngine:
+    engine = create_async_engine(url, echo=echo)
+    configure_sqlite(engine, wal=wal)
+    return engine
+
+
+engine = build_engine(settings.database_url, wal=settings.sqlite_wal, echo=settings.debug)
 SessionFactory = async_sessionmaker(engine, expire_on_commit=False)
 
 

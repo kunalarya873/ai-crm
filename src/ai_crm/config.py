@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     proactive_inactive_opportunity_days: int = 30
     proactive_alert_suppression_minutes: int = 60
     observability_retention_days: int = Field(default=90, ge=1)
+    sqlite_wal: bool = False
     retention_purge_batch_size: int = Field(default=1000, ge=1, le=10000)
     worker_enabled: bool = False
     worker_poll_seconds: float = Field(default=5.0, gt=0)

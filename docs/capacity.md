@@ -54,7 +54,8 @@ ranged from 310 ms to 1,386 ms, while the medians stayed within a few millisecon
 
 1. **Writes are the bottleneck, and their tail is long.** Reads are about 10 ms at the median.
    Writes are 25 to 36 ms at the median but 200 to 280 ms at p95 and up to 1.4 s at the worst,
-   while eight workers contend for SQLite's single writer. Each write also stores an audit event,
+   while eight workers contend for SQLite's single writer (see the WAL experiment below: it
+   helps writes but hurt reads and throughput here). Each write also stores an audit event,
    an outbox event and an operational event in the same transaction, so every write holds the lock
    for several inserts. Whether this is acceptable depends on the real database; it needs
    re-measuring on Postgres.
@@ -72,6 +73,32 @@ ranged from 310 ms to 1,386 ms, while the medians stayed within a few millisecon
    this data size, not every query in the app, and says nothing about other databases' planners.
 4. **Knowledge search** was 15 ms at the median over 200 sources in the large tenant. Search is
    lexical in Python over indexed chunks; behaviour with tens of thousands of sources is unmeasured.
+
+## SQLite write-path experiment (10H)
+
+Hypothesis: SQLite's default rollback journal serialises writers and fsyncs every commit, so WAL
+mode (`journal_mode=WAL`, `synchronous=NORMAL`) should shorten the write tail. Tested with
+`scripts/loadtest.py --profile standard --sqlite-mode default|wal`, three runs per mode, same
+seed, same machine. The table shows the median of the three runs (p50 / p95 / p99 in ms); the
+per-run spread was large, for example default `contacts.update` p99 of 758, 1,064 and 875.
+
+| Operation | default | WAL |
+|---|---|---|
+| contacts.create | 25 / 162 / 555 | 27 / 100 / 356 |
+| contacts.update | 25 / 264 / 875 | 30 / 101 / 130 |
+| jobs.enqueue | 29 / 262 / 771 | 35 / 142 / 465 |
+| contacts.list | 10 / 21 / 43 | 33 / 49 / 61 |
+| knowledge.search | 14 / 42 / 64 | 94 / 259 / 276 |
+| wall time for 1,500 ops | 6.0 s | 8.7 s |
+
+Result: **mixed, so WAL stays off by default.** It cut the write p95 by roughly 40 to 60 percent
+and the write p99 by roughly 35 to 85 percent, but it made reads two to six times slower at the
+median and the whole run 45 percent longer. The read regression was not diagnosed (a growing WAL
+file between checkpoints, or reads now running concurrently with writes and competing for CPU,
+are guesses, not findings). The setting is `SQLITE_WAL=true` (default false) and applies to
+SQLite only. WAL is not safe on network filesystems and leaves `*.db-wal` and `*.db-shm`
+files beside the database. The busy timeout is Python's 5 s default in both modes; turning WAL off again switches a file that was left in WAL back to the default journal. Postgres write behaviour is
+still unmeasured.
 
 ## Capacity assumptions
 

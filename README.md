@@ -2,7 +2,7 @@
 
 This is the runnable backend for the AI-first CRM and business automation platform described in `Target.md`.
 
-## Current implementation: Backend Phases 1, 2, 3A, 4, 5A, 6A, 7A, 8A, 9A, 9B, 10A (kill switches), 10B (SLOs, usage, runbooks), 10C (audit lookup, export, telemetry retention), 10D (worker fairness, circuit breaker, backpressure), 10E (CI, migration tests, migration policy), and 10F (local load harness), and 10G (worker visits only tenants with work)
+## Current implementation: Backend Phases 1, 2, 3A, 4, 5A, 6A, 7A, 8A, 9A, 9B, 10A (kill switches), 10B (SLOs, usage, runbooks), 10C (audit lookup, export, telemetry retention), 10D (worker fairness, circuit breaker, backpressure), 10E (CI, migration tests, migration policy), and 10F (local load harness), and 10G (worker visits only tenants with work), and 10H (SQLite WAL experiment)
 
 The backend currently implements the runtime/security foundation, core CRM vertical slice, provider-neutral integration foundation, permission-aware knowledge retrieval, durable work execution, grounded AI requests, approval-gated action execution, and operational measurement:
 
@@ -363,6 +363,10 @@ The worker rotates the tenant order every tick and gives each tenant at most `WO
 ### Worker discovery (Phase 10G)
 
 Each worker tick first runs one index-backed query for tenants that have claimable ready jobs, running jobs past their lease or timeout, or agent runs past their deadline, and visits only those (migration `0016` adds the two indexes). Ticks that run proactive checks or schedule syncs still visit every tenant. Ready jobs the worker cannot claim (types with no handler, connector jobs held back by a kill switch or an open circuit breaker) do not make a tenant busy, but expired leases are always discovered, whatever the queue or type. A job enqueued during a tick waits for the next one. After the change an idle tick measured about 1 ms from 15 to 505 tenants (it was about 2.1 ms per tenant); SQLite and a single worker only.
+
+### SQLite write tuning (Phase 10H)
+
+`SQLITE_WAL=true` switches the app's SQLite connections to WAL with `synchronous=NORMAL`; it is off by default, and turning it off switches a file left in WAL back to the default journal. In the load harness WAL cut write p95 by roughly 40 to 60 percent but made reads two to six times slower and the run 45 percent longer, so it is opt-in; the numbers and caveats are in `docs/capacity.md`. SQLite only; not safe on network filesystems.
 
 Still open in Phase 10: Postgres and multi-process load evidence, per-request telemetry, a Postgres test lane and record deletion.
 
