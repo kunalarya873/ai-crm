@@ -48,6 +48,8 @@ class Permission(StrEnum):
     ADMIN_AUDIT_READ = "admin:audit:read"
     ADMIN_EXPORT = "admin:export"
     ADMIN_RETENTION_MANAGE = "admin:retention:manage"
+    ADMIN_LEGAL_HOLD_MANAGE = "admin:legal_hold:manage"
+    ADMIN_ERASURE = "admin:erasure"
     AGENTS_READ = "agents:read"
     AGENTS_RUN = "agents:run"
     AGENTS_MANAGE = "agents:manage"

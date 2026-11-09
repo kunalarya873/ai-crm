@@ -85,3 +85,4 @@ class RetentionPurgeResult(BaseModel):
     counts: dict[str, int]
     batch_limit: int
     truncated: bool
+    legal_hold_active: bool = False

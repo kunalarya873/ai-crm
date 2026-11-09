@@ -8,6 +8,7 @@ from .api.deps import RequestContext
 from .audit import record_audit
 from .config import settings
 from .domain import InvalidRequestError
+from .lifecycle.holds import active_hold, require_no_hold
 from .models import (
     MetricObservation,
     OperationalAlert,
@@ -32,6 +33,9 @@ async def purge_telemetry(
         )
     cutoff = utc_now() - timedelta(days=days)
     tenant_id = context.tenant_id
+    if not payload.dry_run:
+        await require_no_hold(session, context, "retention.purge")
+    hold_active = await active_hold(session, tenant_id) is not None
     batch = settings.retention_purge_batch_size
     targets: dict[str, tuple[Any, Any, ColumnElement[bool]]] = {
         "operational_events": (
@@ -99,4 +103,5 @@ async def purge_telemetry(
         counts=counts,
         batch_limit=batch,
         truncated=truncated,
+        legal_hold_active=hold_active,
     )

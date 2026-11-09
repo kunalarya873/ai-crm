@@ -9,6 +9,7 @@ from .domain import (
     DomainError,
     InvalidRequestError,
     InvalidTransitionError,
+    LegalHoldError,
     NotFoundError,
     PermissionDeniedError,
     PreconditionRequiredError,
@@ -52,6 +53,8 @@ async def domain_error_handler(request: Request, error: DomainError) -> JSONResp
         request.state.slo_exempt = True
     elif isinstance(error, BackpressureError):
         status_code, code = 429, "backpressure"
+    elif isinstance(error, LegalHoldError):
+        status_code, code = 409, "legal_hold"
     elif isinstance(error, PermissionDeniedError):
         status_code, code = 403, "permission_denied"
     elif isinstance(error, SeparationOfDutiesError):

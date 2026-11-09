@@ -41,6 +41,10 @@ class CapabilityDisabledError(DomainError):
     pass
 
 
+class LegalHoldError(DomainError):
+    """A legal hold forbids this change until it is released."""
+
+
 class BackpressureError(DomainError):
     """The tenant's job backlog is full; the caller should retry later."""
 

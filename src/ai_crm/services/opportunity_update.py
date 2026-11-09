@@ -12,6 +12,7 @@ from ..domain import (
     VersionConflictError,
     validate_transition,
 )
+from ..lifecycle import ensure_not_erased
 from ..models import Opportunity
 from ..schemas import OpportunityUpdate
 from .common import require_version, utc_now
@@ -32,6 +33,7 @@ async def update_opportunity(
 ) -> Opportunity:
     expected = require_version(expected_version)
     opportunity = await get_opportunity_for_tenant(session, context, opportunity_id)
+    await ensure_not_erased(session, context, "opportunities", opportunity_id)
     if opportunity.version != expected:
         raise VersionConflictError("record_version_conflict")
     changes = payload.model_dump(exclude_unset=True)

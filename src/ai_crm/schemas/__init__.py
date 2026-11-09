@@ -2,6 +2,7 @@ from .actions import *  # noqa: F403
 from .activities import *  # noqa: F403
 from .admin import *  # noqa: F403
 from .admin_audit import *  # noqa: F403
+from .admin_lifecycle import *  # noqa: F403
 from .agent_runs import *  # noqa: F403
 from .agents import *  # noqa: F403
 from .ai_requests import *  # noqa: F403

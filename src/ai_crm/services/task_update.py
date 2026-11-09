@@ -12,6 +12,7 @@ from ..domain import (
     VersionConflictError,
     validate_transition,
 )
+from ..lifecycle import ensure_not_erased
 from ..models import Task
 from ..schemas import TaskUpdate
 from .common import require_version, utc_now
@@ -36,6 +37,7 @@ async def update_task(
     )
     if task is None:
         raise NotFoundError("Task not found")
+    await ensure_not_erased(session, context, "tasks", task_id)
     if task.version != expected:
         raise VersionConflictError("record_version_conflict")
     changes = payload.model_dump(exclude_unset=True)

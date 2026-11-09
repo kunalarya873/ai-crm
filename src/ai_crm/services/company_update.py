@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..api.deps import RequestContext
 from ..domain import ConflictError, InvalidRequestError, VersionConflictError, normalize_name
+from ..lifecycle import ensure_not_erased
 from ..models import Company
 from ..schemas import CompanyUpdate
 from .common import require_version, utc_now
@@ -26,6 +27,7 @@ async def update_company(
 ) -> Company:
     expected = require_version(expected_version)
     company = await get_company_for_tenant(session, context, company_id)
+    await ensure_not_erased(session, context, "companies", company_id)
     if company.version != expected:
         raise VersionConflictError("record_version_conflict")
     changes = payload.model_dump(exclude_unset=True)

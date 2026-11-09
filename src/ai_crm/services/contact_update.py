@@ -12,6 +12,7 @@ from ..domain import (
     VersionConflictError,
     validate_transition,
 )
+from ..lifecycle import ensure_not_erased
 from ..models import Contact
 from ..schemas import ContactUpdate
 from .common import json_safe, require_version, utc_now
@@ -31,6 +32,7 @@ async def update_contact(
 ) -> Contact:
     expected = require_version(expected_version)
     contact = await get_contact_for_tenant(session, context, contact_id)
+    await ensure_not_erased(session, context, "contacts", contact_id)
     if contact.version != expected:
         raise VersionConflictError("record_version_conflict")
     changes = payload.model_dump(exclude_unset=True)

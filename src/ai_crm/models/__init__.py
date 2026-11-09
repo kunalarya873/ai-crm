@@ -9,6 +9,7 @@ from .crm_sales import *  # noqa: F403
 from .integrations import *  # noqa: F403
 from .jobs import *  # noqa: F403
 from .knowledge import *  # noqa: F403
+from .lifecycle import *  # noqa: F403
 from .observability import *  # noqa: F403
 from .tenancy import *  # noqa: F403
 from .webhooks import *  # noqa: F403
