@@ -8,7 +8,7 @@ Canonical, agent-neutral guide for this repository. Every coding agent (Codex, C
 The runnable backend for an AI-first CRM and business-automation platform. Product intent lives in `Target.md` (PRD); the phased delivery plan lives in `modules/`.
 
 - **Stack:** Python ≥ 3.12, FastAPI, async SQLAlchemy 2.x, SQLite (`aiosqlite`) for local/dev, Alembic, Pydantic v2 / `pydantic-settings`, PyJWT. Package manager: **`uv`**.
-- **Status:** Backend Phases 1, 2, 3A, 4, 5A, 6A, 7A, 8A, 9A, 9B are implemented, plus Phase 10A kill switches, 10B SLOs/usage/runbooks and 10C audit lookup/export/telemetry purge and 10D worker fairness/breaker/backpressure 10E CI/migration tests/policy 10F local load harness 10G worker discovery and 10H SQLite WAL experiment (opt-in `SQLITE_WAL`) (~15k lines in `src/`). **Next slice: the rest of Phase 10 (Postgres/multi-process capacity evidence, remaining write-path tail latency (WAL helped writes but hurt reads; see docs/capacity.md), per-request telemetry)** (`modules/backend/phase-10-scale-and-production-operations.md`).
+- **Status:** Backend Phases 1, 2, 3A, 4, 5A, 6A, 7A, 8A, 9A, 9B are implemented, plus Phase 10A kill switches, 10B SLOs/usage/runbooks and 10C audit lookup/export/telemetry purge and 10D worker fairness/breaker/backpressure 10E CI/migration tests/policy 10F local load harness 10G worker discovery 10H SQLite WAL experiment (opt-in `SQLITE_WAL`) and 10I PostgreSQL test lane (~15k lines in `src/`). **Next slice: the rest of Phase 10 (multi-process capacity evidence, remaining write-path tail latency (WAL helped writes but hurt reads; see docs/capacity.md), per-request telemetry)** (`modules/backend/phase-10-scale-and-production-operations.md`).
 - **Local-only boundaries:** the only AI provider is the deterministic `fixture` adapter (no external model calls), the only integration provider is `fixture`, and JWT auth uses a local dev secret. None of this is production-ready; do not describe it as such.
 
 ## 2. Commands
@@ -25,6 +25,7 @@ uv run pytest tests/api/test_actions.py -q -k "<name>"        # one test
 uv run alembic upgrade head                                   # apply migrations
 uv run alembic downgrade base                                 # must also work (round-trip)
 uv run --with pyright pyright                                 # type check
+TEST_DATABASE_URL=postgresql+psycopg_async://user@host/db uv run pytest -q   # same suite on PostgreSQL (needs `uv sync --extra postgres`)
 ```
 
 **Definition of "green" before you report work as done:** `ruff check`, `pytest -q`, `alembic upgrade head` and `alembic downgrade base` (on a throwaway DB), and pyright all pass. If you could not run one, say so explicitly.

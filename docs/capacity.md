@@ -100,6 +100,33 @@ SQLite only. WAL is not safe on network filesystems and leaves `*.db-wal` and `*
 files beside the database. The busy timeout is Python's 5 s default in both modes; turning WAL off again switches a file that was left in WAL back to the default journal. Postgres write behaviour is
 still unmeasured.
 
+## PostgreSQL run (10I)
+
+The same `standard` profile against a throwaway local PostgreSQL 15.3 (Postgres.app, default
+settings, TCP on localhost, one throwaway schema per run), via
+`--database-url postgresql+psycopg_async://...`. Three runs; medians of p50 / p95 / p99 in ms.
+No request errors. Same laptop, same seed. Not a production claim: one node, no replication, no
+pooler, no tuning, client and server on one machine.
+
+| Operation | SQLite (default journal) | PostgreSQL |
+|---|---|---|
+| contacts.list | 10 / 21 / 43 | 18 / 38 / 78 |
+| contacts.create | 25 / 162 / 555 | 37 / 85 / 120 |
+| contacts.update | 25 / 264 / 875 | 39 / 88 / 158 |
+| knowledge.search | 14 / 42 / 64 | 58 / 119 / 226 |
+| jobs.enqueue | 29 / 262 / 771 | 43 / 97 / 128 |
+| wall time, 1,500 ops | 6.0 s | 6.5 s |
+| worker drain | about 130 jobs/s | about 118 jobs/s |
+| idle worker tick | about 1 ms | about 1 ms |
+
+What it shows: the write tail is much shorter on PostgreSQL (p95 85 to 97 ms against 160 to 260 ms,
+p99 120 to 160 ms against 555 to 875 ms), which supports the earlier reading that the long tail
+was SQLite's single writer and fsync-per-commit, not the number of rows written per request. The
+medians are higher than SQLite's, because every statement is now a network round trip instead of
+an in-process call. Knowledge search is the clearest case: it issues several queries per request
+and is about four times slower at the median. That makes the number of statements per request, not
+only per write, the next thing to look at on PostgreSQL. Run-to-run spread was still large.
+
 ## Capacity assumptions
 
 | Dimension | Status |
@@ -111,9 +138,9 @@ still unmeasured.
 | Tenants per worker | Measured: idle tick about 1 ms flat up to 505 tenants (after 10G). Interval ticks (proactive checks, sync scheduling) are still O(tenants) and unmeasured. |
 | Queued jobs per tenant | Configured cap `MAX_QUEUED_JOBS_PER_TENANT=1000`; behaviour near the cap under load unmeasured. |
 | Integrations, webhooks, AI usage, agent runs | Not load tested. |
-| Postgres, connection pools, long transactions | Not tested; there is no Postgres lane. |
+| Postgres | Test suite, migrations and one load profile run against a local PostgreSQL 15 (10I). Production sizing, pooling, replication, long transactions and online-migration lock behaviour: not tested. |
 
 ## Still open
 
-Load against a running server or Postgres, multi-process workers, soak and failure-injection
+Load against a running server, multi-process workers on Postgres, soak and failure-injection
 tests, and performance fixes for the findings above.

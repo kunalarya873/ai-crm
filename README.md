@@ -2,7 +2,7 @@
 
 This is the runnable backend for the AI-first CRM and business automation platform described in `Target.md`.
 
-## Current implementation: Backend Phases 1, 2, 3A, 4, 5A, 6A, 7A, 8A, 9A, 9B, 10A (kill switches), 10B (SLOs, usage, runbooks), 10C (audit lookup, export, telemetry retention), 10D (worker fairness, circuit breaker, backpressure), 10E (CI, migration tests, migration policy), and 10F (local load harness), and 10G (worker visits only tenants with work), and 10H (SQLite WAL experiment)
+## Current implementation: Backend Phases 1, 2, 3A, 4, 5A, 6A, 7A, 8A, 9A, 9B, 10A (kill switches), 10B (SLOs, usage, runbooks), 10C (audit lookup, export, telemetry retention), 10D (worker fairness, circuit breaker, backpressure), 10E (CI, migration tests, migration policy), and 10F (local load harness), and 10G (worker visits only tenants with work), 10H (SQLite WAL experiment), and 10I (PostgreSQL test lane)
 
 The backend currently implements the runtime/security foundation, core CRM vertical slice, provider-neutral integration foundation, permission-aware knowledge retrieval, durable work execution, grounded AI requests, approval-gated action execution, and operational measurement:
 
@@ -368,7 +368,11 @@ Each worker tick first runs one index-backed query for tenants that have claimab
 
 `SQLITE_WAL=true` switches the app's SQLite connections to WAL with `synchronous=NORMAL`; it is off by default, and turning it off switches a file left in WAL back to the default journal. In the load harness WAL cut write p95 by roughly 40 to 60 percent but made reads two to six times slower and the run 45 percent longer, so it is opt-in; the numbers and caveats are in `docs/capacity.md`. SQLite only; not safe on network filesystems.
 
-Still open in Phase 10: Postgres and multi-process load evidence, per-request telemetry, a Postgres test lane and record deletion.
+### PostgreSQL lane (Phase 10I)
+
+`pip install '.[postgres]'` (or `uv sync --extra postgres`) adds the `psycopg` driver; the default install stays SQLite-only. Set `TEST_DATABASE_URL=postgresql+psycopg_async://user@host:5432/db` and `uv run pytest` runs the whole suite against that server, one throwaway schema per test; the migration tests do the same, and tests that depend on SQLite internals are marked `sqlite_only` and skipped. `DATABASE_URL=postgresql+psycopg_async://...` runs the app on PostgreSQL, and Alembic converts it to the sync `psycopg` driver. `scripts/loadtest.py --database-url ...` runs the load profile there. On PostgreSQL 15.3 locally, all 335 API tests, the migration tests and the Alembic round-trip pass, and writes had a much shorter tail than on SQLite (`docs/capacity.md`). A `postgres` CI job runs the same on `postgres:16`; it has not yet run on GitHub. Production sizing, pooling, replication and online-migration locking are not covered.
+
+Still open in Phase 10: multi-process load evidence, per-request telemetry and record deletion.
 
 ## Checks
 

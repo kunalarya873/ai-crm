@@ -44,8 +44,14 @@ that starts writing it, or drop something in the release that stops using it.
 3. Run `alembic downgrade -1` only if the revision is reversible and no data would be lost.
    Otherwise restore from the backup. Never downgrade past a revision whose data you still need.
 
-## What is not proven
+## What is proven, and what is not
 
-Everything here is exercised on SQLite only. Zero-downtime behaviour (lock durations, online
-index builds, long backfills) has not been tested on Postgres, and there are no deployment smoke
-tests or load tests yet.
+The migration tests and the Alembic round-trip (upgrade, `check`, downgrade, upgrade, and a
+downgrade with long data stored) run on SQLite and, with `TEST_DATABASE_URL` set, on PostgreSQL
+(a CI job runs them against `postgres:16`; locally they were run against 15.3). That covers type
+parity between models and migrations and the 32-character revision id limit on a database that
+enforces them.
+
+Still not proven: zero-downtime behaviour on PostgreSQL (lock durations, online index builds,
+long backfills), upgrades of a populated production-sized database, and deployment smoke tests.
+The PostgreSQL CI job has not yet run on GitHub.
