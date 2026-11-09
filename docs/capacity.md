@@ -45,9 +45,10 @@ request errors and no rejected enqueues.
 Worker: 439 jobs (300 drain jobs plus the backlog the workload enqueued) in 3.7 s, about 120
 jobs/s with a no-op handler.
 
-Worker tick with no ready jobs: 15 tenants 0.04 s, 105 tenants 0.22 s, 505 tenants 1.07 s, about
-2.1 ms per tenant. Tail latencies are noisy: across three runs the write p99 ranged from 310 ms to
-1,386 ms, while the medians stayed within a few milliseconds.
+Worker tick with no ready jobs (`wide` profile): before the fix 15 tenants 0.04 s, 105 tenants
+0.22 s, 505 tenants 1.07 s (about 2.1 ms per tenant). After the fix (10G, below) the same tick takes
+about 1 ms at 15, 105 and 505 tenants. Tail latencies are noisy: across four runs the write p99
+ranged from 310 ms to 1,386 ms, while the medians stayed within a few milliseconds.
 
 ## Findings
 
@@ -57,11 +58,14 @@ Worker tick with no ready jobs: 15 tenants 0.04 s, 105 tenants 0.22 s, 505 tenan
    an outbox event and an operational event in the same transaction, so every write holds the lock
    for several inserts. Whether this is acceptable depends on the real database; it needs
    re-measuring on Postgres.
-2. **The worker tick costs about 2 ms per tenant even with no ready jobs.** It lists every tenant
-   and runs reconciliation and overdue-run checks for each. At the default 5 s poll interval,
-   roughly 2,400 tenants would make a tick longer than the interval on this machine. The deferred
-   item "worker O(tenants) cost per tick" is now measured, not guessed. Fix options (not done):
-   only visit tenants with ready work, or run housekeeping less often than job claiming.
+2. **The worker tick cost about 2 ms per tenant even with no ready jobs. Idle ticks fixed in 10G; interval ticks unchanged.** It
+   listed every tenant and ran reconciliation, a claim attempt and overdue-run checks for each, so
+   a tick would have passed the 5 s poll interval at roughly 2,400 tenants on this machine. The
+   worker now runs one index-backed discovery query per tick (ready or expired jobs, overdue agent
+   runs; migration 0016 adds the two indexes) and visits only those tenants: an idle tick is about
+   1 ms and flat from 15 to 505 tenants. Ticks that run proactive checks or schedule syncs (every
+   300 s by default) still visit every tenant and still cost per tenant; that cost was not
+   measured separately. Busy tenants still cost per-tenant work.
 3. **No plain table scans on tenant-owned tables** in the query shapes captured during the
    workload (`--explain`, SQLite `EXPLAIN QUERY PLAN`). The only scans are of the `organizations`
    index, which is how the worker lists tenants. This covers the statements the workload issued at
@@ -77,7 +81,7 @@ Worker tick with no ready jobs: 15 tenants 0.04 s, 105 tenants 0.22 s, 505 tenan
 | Knowledge sources per tenant | Measured: 200. Beyond that, assumed. |
 | Concurrent API clients | Measured: 8 in one process. More processes: unmeasured. |
 | Job throughput | Measured: about 120 jobs/s no-op, single worker. Real handlers (sync, indexing): unmeasured. |
-| Tenants per worker | Measured: about 2.1 ms/tenant with no ready jobs, up to 505 tenants. |
+| Tenants per worker | Measured: idle tick about 1 ms flat up to 505 tenants (after 10G). Interval ticks (proactive checks, sync scheduling) are still O(tenants) and unmeasured. |
 | Queued jobs per tenant | Configured cap `MAX_QUEUED_JOBS_PER_TENANT=1000`; behaviour near the cap under load unmeasured. |
 | Integrations, webhooks, AI usage, agent runs | Not load tested. |
 | Postgres, connection pools, long transactions | Not tested; there is no Postgres lane. |

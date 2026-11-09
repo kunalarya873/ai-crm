@@ -2,7 +2,7 @@
 
 This is the runnable backend for the AI-first CRM and business automation platform described in `Target.md`.
 
-## Current implementation: Backend Phases 1, 2, 3A, 4, 5A, 6A, 7A, 8A, 9A, 9B, 10A (kill switches), 10B (SLOs, usage, runbooks), 10C (audit lookup, export, telemetry retention), 10D (worker fairness, circuit breaker, backpressure), 10E (CI, migration tests, migration policy), and 10F (local load harness)
+## Current implementation: Backend Phases 1, 2, 3A, 4, 5A, 6A, 7A, 8A, 9A, 9B, 10A (kill switches), 10B (SLOs, usage, runbooks), 10C (audit lookup, export, telemetry retention), 10D (worker fairness, circuit breaker, backpressure), 10E (CI, migration tests, migration policy), and 10F (local load harness), and 10G (worker visits only tenants with work)
 
 The backend currently implements the runtime/security foundation, core CRM vertical slice, provider-neutral integration foundation, permission-aware knowledge retrieval, durable work execution, grounded AI requests, approval-gated action execution, and operational measurement:
 
@@ -358,7 +358,11 @@ The worker rotates the tenant order every tick and gives each tenant at most `WO
 
 ### Load and capacity evidence (Phase 10F)
 
-`uv run python scripts/loadtest.py --profile standard` drives the real app in-process against a throwaway SQLite file with a weighted multi-tenant workload, drains the job queue and times the worker tick as tenants are added; `--explain` lists full table scans. `docs/capacity.md` records one real run and its findings: reads are about 10 ms at the median, writes have a long tail under eight concurrent clients (SQLite's single writer plus audit, outbox and event inserts), and the worker tick costs about 2 ms per tenant even with no ready jobs. These are local, single-process SQLite numbers, not a supported-scale claim; Postgres, multi-process, soak and failure-injection runs are still open. A smoke profile runs as a test without timing thresholds.
+`uv run python scripts/loadtest.py --profile standard` drives the real app in-process against a throwaway SQLite file with a weighted multi-tenant workload, drains the job queue and times the worker tick as tenants are added; `--explain` lists full table scans. `docs/capacity.md` records one real run and its findings: reads are about 10 ms at the median, writes have a long tail under eight concurrent clients (SQLite's single writer plus audit, outbox and event inserts), and the worker tick used to cost about 2 ms per tenant even with no ready jobs (fixed in 10G). These are local, single-process SQLite numbers, not a supported-scale claim; Postgres, multi-process, soak and failure-injection runs are still open. A smoke profile runs as a test without timing thresholds.
+
+### Worker discovery (Phase 10G)
+
+Each worker tick first runs one index-backed query for tenants that have claimable ready jobs, running jobs past their lease or timeout, or agent runs past their deadline, and visits only those (migration `0016` adds the two indexes). Ticks that run proactive checks or schedule syncs still visit every tenant. Ready jobs the worker cannot claim (types with no handler, connector jobs held back by a kill switch or an open circuit breaker) do not make a tenant busy, but expired leases are always discovered, whatever the queue or type. A job enqueued during a tick waits for the next one. After the change an idle tick measured about 1 ms from 15 to 505 tenants (it was about 2.1 ms per tenant); SQLite and a single worker only.
 
 Still open in Phase 10: Postgres and multi-process load evidence, per-request telemetry, a Postgres test lane and record deletion.
 
