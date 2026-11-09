@@ -8,7 +8,7 @@ Canonical, agent-neutral guide for this repository. Every coding agent (Codex, C
 The runnable backend for an AI-first CRM and business-automation platform. Product intent lives in `Target.md` (PRD); the phased delivery plan lives in `modules/`.
 
 - **Stack:** Python ≥ 3.12, FastAPI, async SQLAlchemy 2.x, SQLite (`aiosqlite`) for local/dev, Alembic, Pydantic v2 / `pydantic-settings`, PyJWT. Package manager: **`uv`**.
-- **Status:** Backend Phases 1, 2, 3A, 4, 5A, 6A, 7A, 8A, 9A, 9B are implemented, plus Phase 10A kill switches, 10B SLOs/usage/runbooks and 10C audit lookup/export/telemetry purge and 10D worker fairness/breaker/backpressure 10E CI/migration tests/policy 10F local load harness 10G worker discovery 10H SQLite WAL experiment (opt-in `SQLITE_WAL`) and 10I PostgreSQL test lane (~15k lines in `src/`). **Next slice: the rest of Phase 10 (multi-process capacity evidence, remaining write-path tail latency (WAL helped writes but hurt reads; see docs/capacity.md), per-request telemetry)** (`modules/backend/phase-10-scale-and-production-operations.md`).
+- **Status:** Backend Phases 1, 2, 3A, 4, 5A, 6A, 7A, 8A, 9A, 9B are implemented, plus Phase 10A kill switches, 10B SLOs/usage/runbooks and 10C audit lookup/export/telemetry purge and 10D worker fairness/breaker/backpressure 10E CI/migration tests/policy 10F local load harness 10G worker discovery 10H SQLite WAL experiment (opt-in `SQLITE_WAL`) and 10I PostgreSQL test lane, 10J request telemetry and 10K legal holds/erasure (~15k lines in `src/`). **Next slice: the rest of Phase 10 (multi-process capacity evidence, remaining write-path tail latency (WAL helped writes but hurt reads; see docs/capacity.md), per-request telemetry)** (`modules/backend/phase-10-scale-and-production-operations.md`).
 - **Local-only boundaries:** the only AI provider is the deterministic `fixture` adapter (no external model calls), the only integration provider is `fixture`, and JWT auth uses a local dev secret. None of this is production-ready; do not describe it as such.
 
 ## 2. Commands
@@ -51,6 +51,7 @@ src/ai_crm/
   domain.py          DomainError hierarchy, status enums, allowed-transition tables
   members.py         Tenant member/role administration (last-admin protection)
   usage.py           Phase 10B per-tenant admin usage read model (GET /admin/usage)
+  lifecycle/         Phase 10K: legal holds (block erasure and, tenant-wide, real telemetry purges) and in-place record erasure; admin-only
   audit_query.py / export.py / retention.py   Phase 10C: audit lookup, tenant export, telemetry-only purge (never audit events or CRM rows); admin-only
   flags.py           Phase 10A kill switches: ai/workflows/connectors/agents, tenant flags + DISABLED_CAPABILITIES; call require_capability() before *new* work, never on reads or wind-down
   pagination.py      Keyset cursor helpers for list endpoints
@@ -68,7 +69,7 @@ src/ai_crm/
   actions/           Typed action registry, proposals, approval, execution, reconciliation
   observability/     Operational events, metrics, proactive checks, alerts, telemetry redaction; slo/ = SLO definitions (owner from SLO_OWNER) and on-demand evaluation; requests/ = in-memory per-minute request recorder + flush task feeding the API SLOs (table request_metric_buckets, Phase 10J)
   agents/            Phase 9A/9B (eval/ = scripted replayable scenarios, admin-only, assumptions labelled): agent registry, runs/steps, bounded delegation, human escalation (no model loop; the run owner submits steps; agents only propose, never approve/execute)
-alembic/versions/    0001…0017, linear chain; tests/test_migrations.py enforces one head, round-trip and model/migration parity
+alembic/versions/    0001…0018, linear chain; tests/test_migrations.py enforces one head, round-trip and model/migration parity
 .github/workflows/ci.yml  ruff + pytest + pyright + Alembic round-trip (not yet run on GitHub)
 scripts/loadtest.py  local load harness (in-process, SQLite); docs/capacity.md has the recorded run and findings
 docs/migrations.md   expand/contract policy, deploy order, rollback

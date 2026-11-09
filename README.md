@@ -2,7 +2,7 @@
 
 This is the runnable backend for the AI-first CRM and business automation platform described in `Target.md`.
 
-## Current implementation: Backend Phases 1, 2, 3A, 4, 5A, 6A, 7A, 8A, 9A, 9B, 10A (kill switches), 10B (SLOs, usage, runbooks), 10C (audit lookup, export, telemetry retention), 10D (worker fairness, circuit breaker, backpressure), 10E (CI, migration tests, migration policy), and 10F (local load harness), and 10G (worker visits only tenants with work), 10H (SQLite WAL experiment), 10I (PostgreSQL test lane), and 10J (per-request telemetry for the API SLOs)
+## Current implementation: Backend Phases 1, 2, 3A, 4, 5A, 6A, 7A, 8A, 9A, 9B, 10A (kill switches), 10B (SLOs, usage, runbooks), 10C (audit lookup, export, telemetry retention), 10D (worker fairness, circuit breaker, backpressure), 10E (CI, migration tests, migration policy), and 10F (local load harness), and 10G (worker visits only tenants with work), 10H (SQLite WAL experiment), 10I (PostgreSQL test lane), 10J (per-request telemetry for the API SLOs), and 10K (legal holds and record erasure)
 
 The backend currently implements the runtime/security foundation, core CRM vertical slice, provider-neutral integration foundation, permission-aware knowledge retrieval, durable work execution, grounded AI requests, approval-gated action execution, and operational measurement:
 
@@ -338,13 +338,19 @@ GET /admin/usage             per-tenant usage and capability state (admin and ma
 
 `docs/runbooks/` has support procedures for failed jobs, syncs and actions, AI output problems, data-access issues, stuck agent runs and the kill switches. `tests/api/test_runbooks.py` checks that every endpoint a runbook names exists in the OpenAPI schema.
 
-### Data lifecycle (Phase 10C)
+### Data lifecycle (Phase 10C, 10K)
 
 ```text
 GET  /admin/audit-events          audit investigation, filterable, keyset-paginated (admin)
 GET  /admin/export/{resource}     paginated JSON export of contacts, companies, opportunities, activities, tasks (admin)
 POST /admin/retention/purge       purge aged telemetry; dry run by default (admin)
+POST /admin/legal-holds           place a tenant-wide or single-record legal hold (admin)
+GET  /admin/legal-holds           list holds, ?active=true|false (admin)
+POST /admin/legal-holds/{id}/release   release a hold with a reason (admin)
+POST /admin/erasure/{resource}/{id}    anonymise one CRM record in place (admin)
 ```
+
+Erasure (Phase 10K) overwrites a record's personal fields with `[erased]` or nothing, archives it and increments its version, but keeps the row, its id and every link that points at it. It is idempotent, records who erased it and why (`erasure_records`, an audit event and a `record.erased` outbox event carrying ids only), and is refused with 409 `legal_hold` while a tenant-wide or matching record hold is active. A tenant-wide hold also blocks real telemetry purges (dry runs report `legal_hold_active`). Holds do not block normal edits, which are versioned and audited; an erased record, by contrast, can no longer be edited or un-archived (409). Repeating a hold request returns the existing hold. External ids such as `source_record_id` are kept on purpose so a re-sync does not recreate an erased record. Erasure does not reach copies in knowledge chunks, AI run records, operational events, earlier exports, backups or audit details written before it; use the outbox event to propagate it, and do not put personal data in the reason.
 
 The purge deletes only operational events, metric observations, resolved alerts and published outbox rows older than `OBSERVABILITY_RETENTION_DAYS` (a lower cutoff is rejected), at most `RETENTION_PURGE_BATCH_SIZE` rows per table per call. Audit events and CRM records are never purged. Not built: deleting contacts or tenants, legal hold, archival, signed or asynchronous export files, and an automatic scheduled purge. Export is one JSON page per request in the same shape as the API read schemas (including `archived_at` and `version`); `OBSERVABILITY_RETENTION_DAYS` must now be at least 1; reading the audit log writes an `audit.queried` row, so polling it grows the audit table; members, connections and knowledge are not exported.
 
