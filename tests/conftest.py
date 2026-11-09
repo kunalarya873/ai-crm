@@ -1,12 +1,27 @@
+import os
 from collections.abc import AsyncIterator
+from uuid import uuid4
 
 import httpx
+import pytest
 import pytest_asyncio
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from ai_crm.db import get_session
 from ai_crm.main import app
 from ai_crm.models import Base, Membership, Organization, User
+
+TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    if not TEST_DATABASE_URL:
+        return
+    skip = pytest.mark.skip(reason="SQLite-specific; TEST_DATABASE_URL points at another database")
+    for item in items:
+        if "sqlite_only" in item.keywords:
+            item.add_marker(skip)
 
 
 @pytest_asyncio.fixture
@@ -26,8 +41,19 @@ async def client(session_factory) -> AsyncIterator[httpx.AsyncClient]:
 
 @pytest_asyncio.fixture
 async def session_factory(tmp_path) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    database_url = f"sqlite+aiosqlite:///{tmp_path / 'test.db'}"
-    engine = create_async_engine(database_url)
+    schema: str | None = None
+    if TEST_DATABASE_URL:
+        # One schema per test keeps tests isolated on a shared Postgres server.
+        schema = f"t_{uuid4().hex}"
+        admin = create_async_engine(TEST_DATABASE_URL, isolation_level="AUTOCOMMIT")
+        async with admin.connect() as connection:
+            await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+        await admin.dispose()
+        engine = create_async_engine(
+            TEST_DATABASE_URL, connect_args={"options": f"-csearch_path={schema}"}
+        )
+    else:
+        engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
     async with engine.begin() as connection:
@@ -55,3 +81,8 @@ async def session_factory(tmp_path) -> AsyncIterator[async_sessionmaker[AsyncSes
 
     yield session_factory
     await engine.dispose()
+    if schema is not None and TEST_DATABASE_URL:
+        admin = create_async_engine(TEST_DATABASE_URL, isolation_level="AUTOCOMMIT")
+        async with admin.connect() as connection:
+            await connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+        await admin.dispose()

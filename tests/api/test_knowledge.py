@@ -3,7 +3,6 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from ai_crm.auth import create_access_token
 from ai_crm.models import KnowledgeContextAssembly
@@ -48,7 +47,7 @@ async def register_and_index(
 
 async def test_knowledge_index_search_provenance_and_bounded_context(
     client: AsyncClient,
-    tmp_path,
+    session_factory,
 ) -> None:
     source, job = await register_and_index(
         client,
@@ -114,15 +113,12 @@ async def test_knowledge_index_search_provenance_and_bounded_context(
     assert context_result["used_chars"] <= 100
     assert context_result["truncated"] is True
 
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
-    session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as session:
         assembly = await session.scalar(
             select(KnowledgeContextAssembly).where(
                 KnowledgeContextAssembly.id == context_result["assembly_id"]
             )
         )
-    await engine.dispose()
     assert assembly is not None
     assert assembly.item_ids
     assert assembly.citations[0]["source_id"] == source["id"]

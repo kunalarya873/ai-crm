@@ -1,9 +1,13 @@
+import os
+from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import MetaData, Table, create_engine, inspect, text
 
 from alembic import command
 
@@ -16,11 +20,30 @@ def alembic_config() -> Config:
     return config
 
 
+TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
+
+
 @pytest.fixture
-def database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
-    url = f"sqlite:///{tmp_path / 'migrations.db'}"
+def database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
+    """A throwaway database: a SQLite file, or a fresh schema when TEST_DATABASE_URL is set."""
+    if not TEST_DATABASE_URL:
+        url = f"sqlite:///{tmp_path / 'migrations.db'}"
+        monkeypatch.setenv("DATABASE_URL", url)
+        yield url
+        return
+    sync_url = TEST_DATABASE_URL.replace("+psycopg_async", "+psycopg")
+    schema = f"m_{uuid4().hex}"
+    admin = create_engine(sync_url, isolation_level="AUTOCOMMIT")
+    with admin.connect() as connection:
+        connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+    url = f"{sync_url}{'&' if '?' in sync_url else '?'}options=-csearch_path%3D{schema}"
     monkeypatch.setenv("DATABASE_URL", url)
-    return url
+    try:
+        yield url
+    finally:
+        with admin.connect() as connection:
+            connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+        admin.dispose()
 
 
 def table_names(url: str) -> set[str]:
@@ -70,29 +93,21 @@ def test_downgrade_truncates_long_transition_reasons_instead_of_failing(database
     command.upgrade(config, "head")
     engine = create_engine(database)
     try:
+        table = Table("workflow_transitions", MetaData(), autoload_with=engine)
+        values: dict[str, object] = {}
+        for column in table.columns:
+            if column.nullable or column.server_default is not None:
+                continue
+            python_type = column.type.python_type
+            if python_type is datetime:
+                values[column.name] = datetime(2026, 1, 1, tzinfo=UTC)
+            elif python_type in (dict, list):
+                values[column.name] = python_type()
+            else:
+                values[column.name] = python_type() if python_type is not str else "x"
+        values["reason"] = "r" * 2000
         with engine.begin() as connection:
-            columns = [
-                column
-                for column in inspect(connection).get_columns("workflow_transitions")
-                if not column["nullable"] and column["default"] is None
-            ]
-            values: dict[str, object] = {}
-            for column in columns:
-                kind = str(column["type"]).upper()
-                if "INT" in kind or "BOOL" in kind:
-                    values[column["name"]] = 1
-                elif "DATE" in kind or "TIME" in kind:
-                    values[column["name"]] = "2026-01-01 00:00:00"
-                elif "JSON" in kind:
-                    values[column["name"]] = "{}"
-                else:
-                    values[column["name"]] = "x"
-            values["reason"] = "r" * 2000
-            names = ", ".join(values)
-            marks = ", ".join(f":{name}" for name in values)
-            connection.execute(
-                text(f"INSERT INTO workflow_transitions ({names}) VALUES ({marks})"), values
-            )
+            connection.execute(table.insert().values(**values))
 
         command.downgrade(config, "0014_phase10_feature_flags")
 

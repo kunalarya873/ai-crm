@@ -25,6 +25,9 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "ruff>=0.8.0",
 ]
+postgres = [
+    "psycopg[binary]>=3.2",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ai_crm"]
@@ -32,6 +35,9 @@ packages = ["src/ai_crm"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "sqlite_only: depends on SQLite behaviour; skipped when TEST_DATABASE_URL points at Postgres",
+]
 
 [tool.ruff]
 line-length = 100

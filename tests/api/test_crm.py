@@ -3,7 +3,6 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from ai_crm.auth import create_access_token
 from ai_crm.models import AuditEvent, OutboxEvent
@@ -82,7 +81,7 @@ async def test_contact_creation_and_tenant_isolation(client: AsyncClient) -> Non
 
 async def test_contact_creation_records_audit_and_outbox_events(
     client: AsyncClient,
-    tmp_path,
+    session_factory,
 ) -> None:
     correlation_id = "123e4567-e89b-12d3-a456-426614174000"
     response = await client.post(
@@ -95,8 +94,6 @@ async def test_contact_creation_records_audit_and_outbox_events(
     )
     contact_id = response.json()["id"]
 
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
-    session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as session:
         audit_event = await session.scalar(
             select(AuditEvent).where(
@@ -107,7 +104,6 @@ async def test_contact_creation_records_audit_and_outbox_events(
         outbox_event = await session.scalar(
             select(OutboxEvent).where(OutboxEvent.aggregate_id == contact_id)
         )
-    await engine.dispose()
 
     assert response.status_code == 201
     assert audit_event is not None

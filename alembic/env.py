@@ -24,7 +24,7 @@ def get_url() -> str:
         or config.get_main_option("sqlalchemy.url")
         or "sqlite:///./ai_crm_phase1.db"
     )
-    return url.replace("+aiosqlite", "")
+    return url.replace("+aiosqlite", "").replace("+psycopg_async", "+psycopg")
 
 
 def run_migrations_offline() -> None:

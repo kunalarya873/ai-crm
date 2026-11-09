@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from ai_crm.db import build_engine, configure_sqlite
 from ai_crm.models import Base, Organization
 
+pytestmark = pytest.mark.sqlite_only
+
 
 async def pragma(engine, name: str) -> object:
     async with engine.connect() as connection:

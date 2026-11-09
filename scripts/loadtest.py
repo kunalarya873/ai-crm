@@ -22,6 +22,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 os.environ.setdefault("DEBUG", "true")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -31,6 +32,7 @@ from sqlalchemy import event, text  # noqa: E402
 from sqlalchemy.ext.asyncio import (  # noqa: E402
     AsyncSession,
     async_sessionmaker,
+    create_async_engine,
 )
 
 from ai_crm.auth import create_access_token  # noqa: E402
@@ -380,13 +382,27 @@ async def run(
     seed_value: int,
     explain: bool,
     sqlite_mode: str = "default",
+    database_url: str | None = None,
 ) -> dict[str, Any]:
     profile = PROFILES[profile_name]
     rng = random.Random(seed_value)
     tenants = [f"load-{number}" for number in range(len(profile.tenant_weights))]
     with tempfile.TemporaryDirectory() as directory:
         database = Path(directory) / "load.db"
-        engine = build_engine(f"sqlite+aiosqlite:///{database}", wal=sqlite_mode == "wal")
+        schema: str | None = None
+        if database_url:
+            # A throwaway schema keeps the run away from anything else in the database.
+            schema = f"load_{uuid4().hex[:12]}"
+            admin = create_async_engine(database_url, isolation_level="AUTOCOMMIT")
+            async with admin.connect() as connection:
+                await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+            await admin.dispose()
+            engine = create_async_engine(
+                database_url, connect_args={"options": f"-csearch_path={schema}"}
+            )
+            explain = False  # EXPLAIN QUERY PLAN output is SQLite-specific
+        else:
+            engine = build_engine(f"sqlite+aiosqlite:///{database}", wal=sqlite_mode == "wal")
         factory = async_sessionmaker(engine, expire_on_commit=False)
         async with engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
@@ -452,9 +468,24 @@ async def run(
             app.dependency_overrides.update(previous_overrides)
             await engine.dispose()
         size_mb = round(database.stat().st_size / 1_048_576, 2) if database.exists() else 0.0
+        if database_url and schema:
+            admin = create_async_engine(database_url, isolation_level="AUTOCOMMIT")
+            async with admin.connect() as connection:
+                total = await connection.scalar(
+                    text(
+                        "SELECT COALESCE(SUM(pg_total_relation_size(c.oid)), 0) FROM pg_class c "
+                        "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                        "WHERE n.nspname = :schema AND c.relkind = 'r'"
+                    ),
+                    {"schema": schema},
+                )
+                size_mb = round(float(total or 0) / 1_048_576, 2)
+                await connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+            await admin.dispose()
     return {
         "profile": profile_name,
-        "sqlite_mode": sqlite_mode,
+        "database": "postgres" if database_url else "sqlite",
+        "sqlite_mode": None if database_url else sqlite_mode,
         "seed": seed_value,
         "ops": ops or profile.ops,
         "concurrency": concurrency or profile.concurrency,
@@ -480,7 +511,8 @@ async def run(
 
 def render(report: dict[str, Any]) -> str:
     lines = [
-        f"profile={report['profile']} sqlite={report['sqlite_mode']} ops={report['ops']} "
+        f"profile={report['profile']} db={report['database']}/{report['sqlite_mode']} "
+        f"ops={report['ops']} "
         f"concurrency={report['concurrency']} "
         f"wall={report['wall_seconds']}s db={report['database_mb']}MB",
         f"{'operation':<18}{'count':>7}{'err':>5}{'req/s':>9}"
@@ -520,6 +552,10 @@ def main() -> None:
     parser.add_argument("--json", dest="json_path")
     parser.add_argument("--explain", action="store_true")
     parser.add_argument("--sqlite-mode", choices=["default", "wal"], default="default")
+    parser.add_argument(
+        "--database-url",
+        help="PostgreSQL URL (postgresql+psycopg_async://...); runs in a throwaway schema",
+    )
     arguments = parser.parse_args()
     report = asyncio.run(
         run(
@@ -529,6 +565,7 @@ def main() -> None:
             arguments.seed,
             arguments.explain,
             arguments.sqlite_mode,
+            arguments.database_url,
         )
     )
     print(render(report))

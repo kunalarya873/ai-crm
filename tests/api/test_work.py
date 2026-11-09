@@ -3,7 +3,6 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from ai_crm.auth import create_access_token
 from ai_crm.models import DurableJob
@@ -228,7 +227,7 @@ async def test_durable_job_idempotency_claim_heartbeat_and_duplicate_completion(
 
 async def test_job_retry_dead_letter_manual_recovery_and_lease_expiry(
     client: AsyncClient,
-    tmp_path,
+    session_factory,
 ) -> None:
     headers = tenant_headers("tenant-a")
     failure_payload = {
@@ -278,14 +277,11 @@ async def test_job_retry_dead_letter_manual_recovery_and_lease_expiry(
         headers=headers,
         json={"worker_id": "crashed-worker", "lease_seconds": 60},
     )
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
-    session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as session:
         job = await session.scalar(select(DurableJob).where(DurableJob.id == expiring.json()["id"]))
         assert job is not None
         job.lease_expires_at = datetime.now(UTC) - timedelta(seconds=1)
         await session.commit()
-    await engine.dispose()
     expired = await client.post("/api/v1/jobs/reconcile-expired", headers=headers)
 
     assert created.status_code == 201
