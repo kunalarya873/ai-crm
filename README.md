@@ -2,7 +2,7 @@
 
 This is the runnable backend for the AI-first CRM and business automation platform described in `Target.md`.
 
-## Current implementation: Backend Phases 1, 2, 3A, 4, 5A, 6A, 7A, 8A, 9A, 9B, 10A (kill switches), 10B (SLOs, usage, runbooks), 10C (audit lookup, export, telemetry retention), 10D (worker fairness, circuit breaker, backpressure), and 10E (CI, migration tests, migration policy)
+## Current implementation: Backend Phases 1, 2, 3A, 4, 5A, 6A, 7A, 8A, 9A, 9B, 10A (kill switches), 10B (SLOs, usage, runbooks), 10C (audit lookup, export, telemetry retention), 10D (worker fairness, circuit breaker, backpressure), 10E (CI, migration tests, migration policy), and 10F (local load harness)
 
 The backend currently implements the runtime/security foundation, core CRM vertical slice, provider-neutral integration foundation, permission-aware knowledge retrieval, durable work execution, grounded AI requests, approval-gated action execution, and operational measurement:
 
@@ -356,7 +356,11 @@ The worker rotates the tenant order every tick and gives each tenant at most `WO
 
 `.github/workflows/ci.yml` runs ruff, pytest, pyright and the Alembic round-trip (`upgrade head`, `check`, `downgrade base`) on pushes to `main` and on pull requests. It has not been executed on GitHub yet; every command in it was run locally. `tests/test_migrations.py` makes the same guarantees part of the suite: one migration head, upgrade then downgrade then upgrade, models matching migrations (so a model change without a revision fails), and revision ids short enough for Postgres. The parity test found real drift, fixed by migration `0015` (`workflow_transitions.reason` widened to `Text` to match the 5000-character API limit) and by declaring two existing indexes in the models. `docs/migrations.md` has the expand/contract policy, deploy order and rollback procedure. All of it is exercised on SQLite only: Postgres zero-downtime behaviour, deployment smoke tests and load tests are not covered.
 
-Still open in Phase 10: load and capacity evidence, per-request telemetry, a Postgres test lane and record deletion.
+### Load and capacity evidence (Phase 10F)
+
+`uv run python scripts/loadtest.py --profile standard` drives the real app in-process against a throwaway SQLite file with a weighted multi-tenant workload, drains the job queue and times the worker tick as tenants are added; `--explain` lists full table scans. `docs/capacity.md` records one real run and its findings: reads are about 10 ms at the median, writes have a long tail under eight concurrent clients (SQLite's single writer plus audit, outbox and event inserts), and the worker tick costs about 2 ms per tenant even with no ready jobs. These are local, single-process SQLite numbers, not a supported-scale claim; Postgres, multi-process, soak and failure-injection runs are still open. A smoke profile runs as a test without timing thresholds.
+
+Still open in Phase 10: Postgres and multi-process load evidence, per-request telemetry, a Postgres test lane and record deletion.
 
 ## Checks
 
