@@ -184,6 +184,31 @@ for four, but the two runs of the same configuration differed by up to 2.8 times
 An earlier version of the harness ran the servers with `DEBUG` on, which turns on SQL echo; its
 numbers were slower and are not used.
 
+### Where it breaks (10L stress runs)
+
+Same harness, PostgreSQL 15 with its default `max_connections = 100`, 4 API + 4 worker processes
+unless noted, 3,000 operations, 600 to 1,200 jobs.
+
+| Run | Result |
+|---|---|
+| 16, 64, 128, 256 concurrent clients | No errors and every job exactly once. Median latency grows with the number of clients, from about 18 ms to about 380 ms, and p99 reaches 1 to 1.4 s at 128 clients: the system queues instead of failing. Wall time for the 3,000 operations stayed between 4.5 and 7.3 s, so more clients add latency, not throughput. |
+| 8 API + 8 workers (16 processes) | Clean. |
+| 12 + 12 (24 processes) | Clean, 1,200 jobs in 3.1 s (about 390 jobs/s). |
+| **16 + 16 (32 processes)** | **Breaks.** PostgreSQL logged 387 `sorry, too many clients already` errors. 23 of 1,200 jobs ended `dead_letter`, 289 needed a second or third attempt, the drain collapsed to 12.5 jobs/s (against 300 to 390 when it works), one client request failed with a read error, and one request was never recorded by the request metrics (6,222 sent, 6,221 recorded). |
+| 16 + 16 with `max_connections = 500` | Clean again: 1,200 jobs once, 6,222 of 6,222 requests recorded. This confirms the cause. |
+| 2 API + 3 workers, one worker `SIGKILL`ed after 150 jobs (lease 5 s) | All 1,200 jobs finished once. **Inconclusive:** the jobs run in milliseconds, so the killed worker held no job at that moment and lease recovery was not exercised. |
+
+The break is connection exhaustion. Each process owns its own SQLAlchemy pool (the default is 5
+connections plus 10 overflow, and there is no setting for it), so the connections the fleet can
+ask for grow with the number of processes, and 32 processes crossed 100. The damage is wider than
+slow requests: a job whose database call fails mid-attempt loses that attempt, and a lease that
+expires counts as one, so three such failures dead-letter a job that never ran a handler.
+
+Not changed here, because the fix is a design choice: pool size and overflow as settings, a stated
+connection budget (processes x (pool + overflow) below `max_connections`, with headroom),
+retrying infrastructure failures without spending a job attempt, and a connection pooler such as
+PgBouncer. Until then, treat `max_connections` as the first limit when adding processes.
+
 ## Capacity assumptions
 
 | Dimension | Status |

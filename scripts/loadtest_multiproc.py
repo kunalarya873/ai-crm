@@ -86,7 +86,7 @@ def scoped_url(base: str, schema: str) -> str:
 
 
 def start_server(
-    url: str, log_dir: Path, name: str, *, worker: bool
+    url: str, log_dir: Path, name: str, *, worker: bool, lease_seconds: int = 60
 ) -> tuple[subprocess.Popen, str]:
     port = free_port()
     env = {
@@ -97,6 +97,7 @@ def start_server(
         "SEED_DEMO_DATA": "false",
         "WORKER_ENABLED": "true" if worker else "false",
         "WORKER_POLL_SECONDS": "0.2",
+        "JOB_DEFAULT_LEASE_SECONDS": str(lease_seconds),
         "MAX_QUEUED_JOBS_PER_TENANT": "100000",
         "REQUEST_METRICS_ENABLED": "true",
         "REQUEST_METRICS_FLUSH_SECONDS": "2",
@@ -178,6 +179,21 @@ async def wait_drained(factory: Any, timeout: float) -> float:
     return time.perf_counter() - started
 
 
+async def kill_worker_mid_drain(factory: Any, victim: subprocess.Popen, after: int) -> int:
+    """SIGKILL one worker once `after` jobs have finished, so it dies holding leases."""
+    done = 0
+    for _ in range(600):
+        async with factory() as session:
+            done = int(await session.scalar(text(
+                "select count(*) from durable_jobs where job_type = 'knowledge.index' "
+                "and status = 'succeeded'")) or 0)
+        if done >= after:
+            break
+        await asyncio.sleep(0.1)
+    victim.kill()
+    return done
+
+
 async def correctness(factory: Any) -> dict[str, Any]:
     async def rows(sql: str) -> list[tuple[Any, ...]]:
         async with factory() as session:
@@ -203,6 +219,7 @@ async def correctness(factory: Any) -> dict[str, Any]:
         "index_job_status": index_status,
         "per_tenant_seconds_to_finish": {t: round(float(s), 2) for t, s in spans},
         "every_job_ran_exactly_once": set(statuses) <= {"succeeded"} and set(attempts) <= {1},
+        "all_jobs_succeeded": set(statuses) <= {"succeeded"},
     }
 
 
@@ -250,7 +267,9 @@ async def run_config(args: argparse.Namespace, api: int, workers: int) -> dict[s
             processes.append(process)
             api_urls.append(address)
         for number in range(workers):
-            process, address = start_server(url, log_dir, f"worker{number}", worker=True)
+            process, address = start_server(
+                url, log_dir, f"worker{number}", worker=True, lease_seconds=args.lease_seconds
+            )
             processes.append(process)
             worker_urls.append(address)
         polls = await wait_ready(api_urls + worker_urls)
@@ -271,6 +290,10 @@ async def run_config(args: argparse.Namespace, api: int, workers: int) -> dict[s
         run_at = (datetime.now(UTC) + timedelta(seconds=args.gate_seconds)).isoformat()
         queued = await queue_index_jobs(fleet, factory, tenants, args.jobs, run_at)
         queue_seconds = time.perf_counter() - started
+        if args.kill_worker:
+            result["killed_worker_after_jobs"] = await kill_worker_mid_drain(
+                factory, processes[api], args.kill_after
+            )
         drain_seconds = await wait_drained(factory, args.drain_timeout)
         result["drain"] = {
             "jobs_queued": queued,
@@ -335,6 +358,10 @@ def main() -> None:
     parser.add_argument("--gate-seconds", type=float, default=8,
                         help="jobs become ready this long after the run starts queueing")
     parser.add_argument("--drain-timeout", type=float, default=180)
+    parser.add_argument("--kill-worker", action="store_true",
+                        help="SIGKILL one worker mid-drain; jobs it held must be re-run")
+    parser.add_argument("--kill-after", type=int, default=100, help="finished jobs before the kill")
+    parser.add_argument("--lease-seconds", type=int, default=60, help="worker job lease")
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--json", dest="json_path")
     args = parser.parse_args()
