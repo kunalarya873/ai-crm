@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     proactive_alert_suppression_minutes: int = 60
     observability_retention_days: int = Field(default=90, ge=1)
     sqlite_wal: bool = False
+    request_metrics_enabled: bool = True
+    request_metrics_flush_seconds: float = Field(default=30.0, gt=0)
+    request_metrics_max_keys: int = Field(default=2000, ge=10)
     retention_purge_batch_size: int = Field(default=1000, ge=1, le=10000)
     worker_enabled: bool = False
     worker_poll_seconds: float = Field(default=5.0, gt=0)

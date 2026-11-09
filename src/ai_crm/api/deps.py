@@ -77,6 +77,7 @@ async def get_request_context(
             detail="User is not a member of this tenant",
         )
 
+    request.state.tenant_id = tenant_id  # verified membership: safe to label request metrics
     return RequestContext(
         tenant_id=tenant_id,
         actor_id=actor_id,

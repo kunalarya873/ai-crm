@@ -49,6 +49,7 @@ async def domain_error_handler(request: Request, error: DomainError) -> JSONResp
         status_code, code = 409, "invalid_transition"
     elif isinstance(error, CapabilityDisabledError):
         status_code, code = 503, "capability_disabled"
+        request.state.slo_exempt = True
     elif isinstance(error, BackpressureError):
         status_code, code = 429, "backpressure"
     elif isinstance(error, PermissionDeniedError):

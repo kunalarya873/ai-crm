@@ -22,6 +22,7 @@ from .domain import (
 )
 from .error_handlers import database_error_handler, domain_error_handler
 from .middleware import correlation_id_middleware, parse_traceparent  # noqa: F401
+from .observability.requests import request_metrics_loop
 from .work.runner import run_forever
 
 
@@ -32,18 +33,20 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     if settings.debug and settings.seed_demo_data:
         await seed_local_identity()
     stop_event = asyncio.Event()
-    worker_task = None
+    tasks: list[asyncio.Task[None]] = []
     if settings.worker_enabled:
-        worker_task = asyncio.create_task(run_forever(SessionFactory, stop_event))
+        tasks.append(asyncio.create_task(run_forever(SessionFactory, stop_event)))
+    if settings.request_metrics_enabled:
+        tasks.append(asyncio.create_task(request_metrics_loop(SessionFactory, stop_event)))
     yield
     stop_event.set()
-    if worker_task is not None:
+    for task in tasks:
         try:
-            await asyncio.wait_for(worker_task, timeout=10)
+            await asyncio.wait_for(task, timeout=10)
         except TimeoutError:
-            worker_task.cancel()
+            task.cancel()
             with suppress(asyncio.CancelledError, Exception):
-                await worker_task
+                await task
     await close_database()
 
 

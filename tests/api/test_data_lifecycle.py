@@ -272,6 +272,7 @@ async def test_purge_dry_run_is_default_and_deletes_nothing(
     assert body["counts"] == {
         "operational_events": 1,
         "metric_observations": 1,
+        "request_metric_buckets": 0,
         "resolved_alerts": 1,
         "published_outbox_events": 1,
     }

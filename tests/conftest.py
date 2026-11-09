@@ -8,6 +8,7 @@ import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from ai_crm.config import settings
 from ai_crm.db import get_session
 from ai_crm.main import app
 from ai_crm.models import Base, Membership, Organization, User
@@ -22,6 +23,12 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     for item in items:
         if "sqlite_only" in item.keywords:
             item.add_marker(skip)
+
+
+@pytest.fixture(autouse=True)
+def request_metrics_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the process-wide request recorder (and its flush task) out of unrelated tests."""
+    monkeypatch.setattr(settings, "request_metrics_enabled", False)
 
 
 @pytest_asyncio.fixture

@@ -8,7 +8,14 @@ from .api.deps import RequestContext
 from .audit import record_audit
 from .config import settings
 from .domain import InvalidRequestError
-from .models import MetricObservation, OperationalAlert, OperationalEvent, OutboxEvent, utc_now
+from .models import (
+    MetricObservation,
+    OperationalAlert,
+    OperationalEvent,
+    OutboxEvent,
+    RequestMetricBucket,
+    utc_now,
+)
 from .schemas import RetentionPurgeRequest, RetentionPurgeResult
 
 
@@ -36,6 +43,11 @@ async def purge_telemetry(
             MetricObservation,
             MetricObservation.created_at,
             MetricObservation.created_at < cutoff,
+        ),
+        "request_metric_buckets": (
+            RequestMetricBucket,
+            RequestMetricBucket.bucket_start,
+            RequestMetricBucket.bucket_start < cutoff,
         ),
         "resolved_alerts": (
             OperationalAlert,

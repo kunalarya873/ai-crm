@@ -2,13 +2,13 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import JSON, DateTime, Float, Index, String, Text, UniqueConstraint
+from sqlalchemy import JSON, DateTime, Float, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base, utc_now
 
 __all__ = [
-    "MetricObservation", "OperationalAlert", "OperationalEvent",
+    "MetricObservation", "OperationalAlert", "OperationalEvent", "RequestMetricBucket",
 ]
 
 
@@ -94,3 +94,30 @@ class OperationalAlert(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now
     )
+
+
+class RequestMetricBucket(Base):
+    """Per-minute request counts and a latency histogram for one process; summed when read.
+    The empty tenant holds requests that never reached an authenticated tenant."""
+
+    __tablename__ = "request_metric_buckets"
+    __table_args__ = (Index("ix_request_metric_buckets_tenant_start", "tenant_id", "bucket_start"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    bucket_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    route: Mapped[str] = mapped_column(String(200), nullable=False)
+    method: Mapped[str] = mapped_column(String(10), nullable=False)
+    status_class: Mapped[str] = mapped_column(String(10), nullable=False)
+    process_id: Mapped[str] = mapped_column(String(60), nullable=False)
+    count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    latency_sum_ms: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    le_25: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    le_50: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    le_100: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    le_250: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    le_500: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    le_1000: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    le_2500: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    le_5000: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    le_inf: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

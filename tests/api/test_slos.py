@@ -11,7 +11,7 @@ from ai_crm.models import ActionExecution, AgentRun, AIRun, DurableJob, Integrat
 from tests.api.agent_helpers import API, headers, make_agent, start
 
 Factory = async_sessionmaker[AsyncSession]
-UNMEASURED = {"api_availability", "api_latency_p95_ms", "api_error_rate"}
+API_SLOS = {"api_availability", "api_latency_p95_ms", "api_error_rate"}
 
 
 async def slos(
@@ -56,16 +56,16 @@ async def test_empty_tenant_reports_no_data_not_a_misleading_pass(client: AsyncC
         assert result[key]["value"] is None
 
 
-async def test_api_slos_are_never_faked_and_every_slo_has_an_owner(
+async def test_api_slos_without_traffic_report_no_data_and_every_slo_has_an_owner(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     default_owner = await slos(client)
     monkeypatch.setattr(settings, "slo_owner", "payments-oncall")
     custom_owner = await slos(client)
 
-    for key in UNMEASURED:
-        assert default_owner[key]["status"] == "not_measured"
-        assert default_owner[key]["value"] is None and default_owner[key]["reason"]
+    for key in API_SLOS:
+        assert default_owner[key]["status"] == "no_data"
+        assert default_owner[key]["value"] is None
     assert {item["owner"] for item in default_owner.values()} == {"platform-oncall"}
     assert {item["owner"] for item in custom_owner.values()} == {"payments-oncall"}
 

@@ -5,8 +5,7 @@ from typing import Literal
 from ...config import settings
 
 __all__ = [
-    "Comparison", "MAX_SLO_WINDOW", "NO_REQUEST_TELEMETRY", "SloDefinition", "_slo", "_unmeasured",
-    "slo_definitions",
+    "Comparison", "MAX_SLO_WINDOW", "SloDefinition", "_slo", "slo_definitions",
 ]
 
 
@@ -27,21 +26,10 @@ class SloDefinition:
     reason: str | None = None
 
 
-NO_REQUEST_TELEMETRY = (
-    "The backend does not persist per-request telemetry, so this cannot be measured yet."
-)
-
-
 def _slo(
     key: str, description: str, unit: str, comparison: Comparison, target: float
 ) -> SloDefinition:
     return SloDefinition(key, description, unit, comparison, target)
-
-
-def _unmeasured(
-    key: str, description: str, unit: str, comparison: Comparison, target: float
-) -> SloDefinition:
-    return SloDefinition(key, description, unit, comparison, target, False, NO_REQUEST_TELEMETRY)
 
 
 def slo_definitions() -> tuple[SloDefinition, ...]:
@@ -72,7 +60,19 @@ def slo_definitions() -> tuple[SloDefinition, ...]:
         _slo("ai_fallback_rate", "AI runs that fell back to a safe response", "ratio", "lte", 0.05),
         _slo("ai_avg_latency_ms", "Average AI response time", "milliseconds", "lte", 2000),
         _slo("agent_overdue_runs", "Agent runs past their deadline", "count", "lte", 0),
-        _unmeasured("api_availability", "API availability", "ratio", "gte", 0.999),
-        _unmeasured("api_latency_p95_ms", "API p95 latency", "milliseconds", "lte", 500),
-        _unmeasured("api_error_rate", "API 5xx error rate", "ratio", "lte", 0.01),
+        _slo(
+            "api_availability",
+            "Requests not answered with a 5xx (kill-switch 503s excluded)",
+            "ratio",
+            "gte",
+            0.999,
+        ),
+        _slo(
+            "api_latency_p95_ms",
+            "API p95 latency, as the upper bound of its histogram bucket",
+            "milliseconds",
+            "lte",
+            500,
+        ),
+        _slo("api_error_rate", "API 5xx error rate (4xx are not errors)", "ratio", "lte", 0.01),
     )
