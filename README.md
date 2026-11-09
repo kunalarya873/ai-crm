@@ -2,7 +2,7 @@
 
 This is the runnable backend for the AI-first CRM and business automation platform described in `Target.md`.
 
-## Current implementation: Backend Phases 1, 2, 3A, 4, 5A, 6A, 7A, 8A, 9A, 9B, 10A (kill switches), 10B (SLOs, usage, runbooks), 10C (audit lookup, export, telemetry retention), 10D (worker fairness, circuit breaker, backpressure), 10E (CI, migration tests, migration policy), and 10F (local load harness), and 10G (worker visits only tenants with work), 10H (SQLite WAL experiment), 10I (PostgreSQL test lane), 10J (per-request telemetry for the API SLOs), and 10K (legal holds and record erasure)
+## Current implementation: Backend Phases 1, 2, 3A, 4, 5A, 6A, 7A, 8A, 9A, 9B, 10A (kill switches), 10B (SLOs, usage, runbooks), 10C (audit lookup, export, telemetry retention), 10D (worker fairness, circuit breaker, backpressure), 10E (CI, migration tests, migration policy), and 10F (local load harness), and 10G (worker visits only tenants with work), 10H (SQLite WAL experiment), 10I (PostgreSQL test lane), 10J (per-request telemetry for the API SLOs), 10K (legal holds and record erasure), and 10L (multi-process load harness)
 
 The backend currently implements the runtime/security foundation, core CRM vertical slice, provider-neutral integration foundation, permission-aware knowledge retrieval, durable work execution, grounded AI requests, approval-gated action execution, and operational measurement:
 
@@ -373,6 +373,10 @@ Each worker tick first runs one index-backed query for tenants that have claimab
 ### SQLite write tuning (Phase 10H)
 
 `SQLITE_WAL=true` switches the app's SQLite connections to WAL with `synchronous=NORMAL`; it is off by default, and turning it off switches a file left in WAL back to the default journal. In the load harness WAL cut write p95 by roughly 40 to 60 percent but made reads two to six times slower and the run 45 percent longer, so it is opt-in; the numbers and caveats are in `docs/capacity.md`. SQLite only; not safe on network filesystems.
+
+### Multi-process load (Phase 10L)
+
+`uv run python scripts/loadtest_multiproc.py --database-url postgresql+psycopg_async://... --matrix 1/1,2/2,4/4` starts that many API and worker processes against a throwaway schema, drives them over HTTP, queues real `knowledge.index` jobs, and reports latency plus whether every job ran exactly once and whether the request metrics add up. Results and limits (one laptop, fixture providers, wide run-to-run spread) are in `docs/capacity.md`.
 
 ### PostgreSQL lane (Phase 10I)
 

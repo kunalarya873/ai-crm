@@ -145,13 +145,52 @@ before. The flush writes one row per (minute, tenant, route, method, status clas
 seconds, which is a handful of rows per tick under this load; its cost on a busy multi-process
 deployment is not measured.
 
+## Multiple processes on PostgreSQL (10L)
+
+`scripts/loadtest_multiproc.py` starts N real API processes and M worker processes (uvicorn, one
+event loop each, `DEBUG` off) against a fresh schema in a local PostgreSQL 15, drives the API over
+HTTP with the same operation mix as `loadtest.py` (1,500 operations, 16 concurrent clients,
+500 contacts and 50 knowledge sources on the large tenant), then queues 600 real `knowledge.index`
+jobs that all become ready at the same instant (`run_at` a few seconds ahead), so the drain rate
+is not capped by how fast the client can queue them. Apple M2, 8 cores, 8 GB, client, servers and
+database on the same machine. Two full runs; each cell is run 1 / run 2.
+
+```bash
+uv run python scripts/loadtest_multiproc.py \
+  --database-url postgresql+psycopg_async://postgres@127.0.0.1:54329/crm_mp \
+  --matrix 1/1,2/1,2/2,4/2,4/4 --json /tmp/multiproc.json
+```
+
+| API / worker processes | list p50 (ms) | create p50 (ms) | search p50 (ms) | worker jobs/s |
+|---|---|---|---|---|
+| 1 / 1 | 24.8 / 24.9 | 48.1 / 49.1 | 39.9 / 37.9 | 88 / 78 |
+| 2 / 1 | 17.4 / 17.1 | 23.2 / 23.6 | 20.0 / 20.5 | 87 / 79 |
+| 2 / 2 | 21.2 / 17.7 | 32.0 / 24.0 | 28.9 / 20.1 | 67 / 185 |
+| 4 / 2 | 18.2 / 17.3 | 24.3 / 23.4 | 19.6 / 17.6 | 133 / 186 |
+| 4 / 4 | 21.7 / 19.7 | 28.6 / 26.4 | 22.8 / 21.2 | 111 / 268 |
+
+Correctness held in all ten configurations (6,000 jobs): every `knowledge.index` job finished
+`succeeded` with `attempts = 1`, none were left running, no request failed, the servers logged no
+errors or tracebacks, and each tenant's jobs finished within about 0.7 seconds of the others'
+(no tenant starved). The request metrics from 10J reconciled exactly: the number of requests the
+client sent equalled the sum of `request_metric_buckets.count` across all processes in every
+configuration (for example 3,498 sent, 3,498 recorded), after a graceful shutdown flushed them.
+
+What it shows: a second API process roughly halves the median latency of writes and searches
+against one process (the single event loop was the limit); further API processes help less.
+Worker throughput rose from about 80 to 90 jobs/s for one worker to somewhere between 110 and 270
+for four, but the two runs of the same configuration differed by up to 2.8 times (2/2 gave 67 and
+185), so the scaling factor is not established. Do not read a speed-up figure from this table.
+An earlier version of the harness ran the servers with `DEBUG` on, which turns on SQL echo; its
+numbers were slower and are not used.
+
 ## Capacity assumptions
 
 | Dimension | Status |
 |---|---|
 | Contacts per large tenant | Measured: about 2,150 with reads at 10 ms p50. Beyond that, assumed. |
 | Knowledge sources per tenant | Measured: 200. Beyond that, assumed. |
-| Concurrent API clients | Measured: 8 in one process. More processes: unmeasured. |
+| Concurrent API clients | Measured: 8 in one process (SQLite), 16 over HTTP across 1 to 4 processes (PostgreSQL, 10L). More: unmeasured. |
 | Job throughput | Measured: about 120 jobs/s no-op, single worker. Real handlers (sync, indexing): unmeasured. |
 | Tenants per worker | Measured: idle tick about 1 ms flat up to 505 tenants (after 10G). Interval ticks (proactive checks, sync scheduling) are still O(tenants) and unmeasured. |
 | Queued jobs per tenant | Configured cap `MAX_QUEUED_JOBS_PER_TENANT=1000`; behaviour near the cap under load unmeasured. |
@@ -160,5 +199,5 @@ deployment is not measured.
 
 ## Still open
 
-Load against a running server, multi-process workers on Postgres, soak and failure-injection
-tests, and performance fixes for the findings above.
+Soak and failure-injection tests (killing a worker mid-job, database restarts), a network between
+client, servers and database, and performance fixes for the findings above.
