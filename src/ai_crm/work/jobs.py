@@ -5,7 +5,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import ColumnElement, func, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -234,6 +234,22 @@ async def list_jobs(
 CLAIM_ATTEMPTS = 3
 
 
+def ready_condition(now: datetime) -> ColumnElement[bool]:
+    """Queued or retryable jobs that are due. Shared by claiming and the worker's discovery."""
+    return (
+        DurableJob.status.in_({"queued", "retryable"})
+        & (DurableJob.run_at <= now)
+        & or_(DurableJob.next_attempt_at.is_(None), DurableJob.next_attempt_at <= now)
+    )
+
+
+def expired_condition(now: datetime) -> ColumnElement[bool]:
+    """Running jobs whose lease or timeout has passed. Shared by reconciliation and discovery."""
+    return (DurableJob.status == "running") & or_(
+        DurableJob.lease_expires_at <= now, DurableJob.timeout_at <= now
+    )
+
+
 async def claim_next_job(
     session: AsyncSession,
     context: RequestContext,
@@ -246,16 +262,8 @@ async def claim_next_job(
     if not worker_id.strip():
         raise InvalidRequestError("worker_id is required")
     now = utc_now()
-    ready = (
-        (
-            DurableJob.status.in_({"queued", "retryable"})
-            & (DurableJob.run_at <= now)
-            & or_(DurableJob.next_attempt_at.is_(None), DurableJob.next_attempt_at <= now)
-        )
-        | (
-            (DurableJob.status == "running")
-            & (DurableJob.lease_expires_at <= now)
-        )
+    ready = ready_condition(now) | (
+        (DurableJob.status == "running") & (DurableJob.lease_expires_at <= now)
     )
     statement = (
         select(DurableJob)
@@ -328,9 +336,7 @@ async def reconcile_expired_jobs(
     now = utc_now()
     result = await session.scalars(
         select(DurableJob).where(
-            DurableJob.tenant_id == context.tenant_id,
-            DurableJob.status == "running",
-            or_(DurableJob.lease_expires_at <= now, DurableJob.timeout_at <= now),
+            DurableJob.tenant_id == context.tenant_id, expired_condition(now)
         )
     )
     jobs = list(result)

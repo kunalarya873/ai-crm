@@ -893,7 +893,7 @@ async def test_sync_backoff_accumulates_and_permanent_failures_pause_scheduling(
 
 
 async def test_run_tick_reports_failed_tenants(
-    client: AsyncClient, session_factory: Factory, monkeypatch: pytest.MonkeyPatch
+    client: AsyncClient, session_factory: Factory, monkeypatch: pytest.MonkeyPatch, noop_handler
 ) -> None:
     from ai_crm.work import runner as runner_module
 
@@ -901,6 +901,9 @@ async def test_run_tick_reports_failed_tenants(
         raise RuntimeError("db down")
 
     monkeypatch.setattr(runner_module, "reconcile_expired_jobs", broken)
+    # Only tenants with work are visited, so give each tenant something ready to run.
+    await create_job(client, "notification.send", {}, key="f-a", tenant_id="tenant-a")
+    await create_job(client, "notification.send", {}, key="f-b", tenant_id="tenant-b")
     failures: list[str] = []
 
     await run_tick(session_factory, failures=failures)

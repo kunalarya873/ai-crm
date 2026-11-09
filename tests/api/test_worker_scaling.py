@@ -163,7 +163,7 @@ async def test_tenant_order_rotates_every_tick(
     monkeypatch.setitem(
         handlers_module.HANDLERS, "notification.send", (record, frozenset({Permission.WORK_MANAGE}))
     )
-    monkeypatch.setattr(runner_module, "_tick_counter", 0)
+    monkeypatch.setattr(runner_module, "_last_start", None)
     for tenant in ("tenant-a", "tenant-b"):
         for index in range(2):
             await create_job(

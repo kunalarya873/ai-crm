@@ -5,6 +5,7 @@ from .runs import (
     list_messages,
     list_runs,
     list_steps,
+    overdue_run_condition,
     start_run,
     submit_step,
     transition_run,
@@ -12,6 +13,7 @@ from .runs import (
 
 __all__ = [
     "expire_overdue_runs",
+    "overdue_run_condition",
     "get_agent",
     "get_run",
     "list_agents",

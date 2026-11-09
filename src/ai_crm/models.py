@@ -581,6 +581,7 @@ class DurableJob(Base):
         Index("ix_durable_jobs_tenant_queue_ready", "tenant_id", "queue", "status", "run_at"),
         Index("ix_durable_jobs_tenant_status", "tenant_id", "status"),
         Index("ix_durable_jobs_lease", "status", "lease_expires_at"),
+        Index("ix_durable_jobs_status_run_at", "status", "run_at"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
@@ -948,6 +949,7 @@ class AgentRun(Base):
         Index("ix_agent_runs_tenant_root", "tenant_id", "root_run_id"),
         Index("ix_agent_runs_tenant_parent", "tenant_id", "parent_run_id"),
         Index("ix_agent_runs_tenant_created", "tenant_id", "created_at"),
+        Index("ix_agent_runs_status_deadline", "status", "deadline_at"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))

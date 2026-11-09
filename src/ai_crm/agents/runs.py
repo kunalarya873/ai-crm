@@ -8,7 +8,7 @@ from typing import Any, cast
 from uuid import uuid4
 
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import func, select, update
+from sqlalchemy import ColumnElement, func, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -571,14 +571,17 @@ async def _cancel_tree(session: AsyncSession, context: RequestContext, run: Agen
     await _terminate(session, context, run, "cancelled", "cancelled_by_user")
 
 
+def overdue_run_condition(now: datetime) -> ColumnElement[bool]:
+    """Active runs past their deadline. Shared by the sweep and the worker's discovery."""
+    return AgentRun.status.in_(ACTIVE_RUN_STATUSES) & (AgentRun.deadline_at <= now)
+
+
 async def expire_overdue_runs(session: AsyncSession, context: RequestContext) -> int:
     """Fail runs past their deadline so a crashed or stalled driver can never strand one."""
     runs = list(
         await session.scalars(
             select(AgentRun).where(
-                AgentRun.tenant_id == context.tenant_id,
-                AgentRun.status.in_(ACTIVE_RUN_STATUSES),
-                AgentRun.deadline_at <= utc_now(),
+                AgentRun.tenant_id == context.tenant_id, overdue_run_condition(utc_now())
             )
         )
     )

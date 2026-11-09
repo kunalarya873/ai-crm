@@ -4,10 +4,10 @@ import time
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from ..agents import expire_overdue_runs
+from ..agents import expire_overdue_runs, overdue_run_condition
 from ..api.deps import RequestContext
 from ..config import settings
 from ..domain import (
@@ -24,10 +24,12 @@ from ..integrations import (
     refresh_connection,
 )
 from ..models import (
+    AgentRun,
     DurableJob,
     IntegrationConnection,
     IntegrationSyncRun,
     Organization,
+    TenantFeatureFlag,
     WebhookEvent,
     utc_now,
 )
@@ -40,8 +42,10 @@ from .jobs import (
     claim_next_job,
     complete_job,
     create_job,
+    expired_condition,
     fail_job,
     heartbeat_job,
+    ready_condition,
     reconcile_expired_jobs,
 )
 
@@ -58,7 +62,7 @@ CONNECTOR_JOB_TYPES = frozenset({"integration.sync", "integration.webhook"})
 connector_breaker = CircuitBreaker(
     settings.connector_breaker_failures, settings.connector_breaker_cooldown_seconds
 )
-_tick_counter = 0
+_last_start: str | None = None
 
 
 async def _job_provider(session: AsyncSession, tenant_id: str, job: DurableJob) -> str:
@@ -246,6 +250,38 @@ async def enqueue_scheduled_syncs(
     return enqueued
 
 
+async def tenants_with_work(factory: async_sessionmaker[AsyncSession], now: datetime) -> set[str]:
+    """Tenants the per-tenant pass would act on this tick: claimable ready jobs, running jobs
+    whose lease or timeout has passed, and agent runs past their deadline.
+
+    Deliberately cross-tenant (the worker already lists every tenant) and index-backed, so an
+    idle tick costs a couple of queries instead of several per tenant. Ready jobs the worker
+    cannot claim do not make a tenant busy: types without a handler (they wait for external
+    workers), and connector jobs held back by the platform kill switch, a tenant kill switch or
+    an open circuit breaker. Expired leases are always discovered, whatever the queue or type,
+    because reconciliation is not limited to claimable jobs."""
+    claimable_types = set(HANDLERS)
+    if connector_breaker.blocked() or "connectors" in settings.disabled_capability_set:
+        claimable_types -= CONNECTOR_JOB_TYPES
+    ready = ready_condition(now) & (DurableJob.queue == QUEUE)
+    ready = ready & DurableJob.job_type.in_(claimable_types)
+    if CONNECTOR_JOB_TYPES & claimable_types:
+        switched_off = exists().where(
+            TenantFeatureFlag.tenant_id == DurableJob.tenant_id,
+            TenantFeatureFlag.flag_key == "connectors",
+            TenantFeatureFlag.enabled.is_(False),
+        )
+        ready = ready & ~(DurableJob.job_type.in_(CONNECTOR_JOB_TYPES) & switched_off)
+    async with factory() as session:
+        job_tenants = await session.scalars(
+            select(DurableJob.tenant_id).where(ready | expired_condition(now)).distinct()
+        )
+        run_tenants = await session.scalars(
+            select(AgentRun.tenant_id).where(overdue_run_condition(now)).distinct()
+        )
+        return set(job_tenants) | set(run_tenants)
+
+
 async def run_tick(
     factory: async_sessionmaker[AsyncSession],
     *,
@@ -254,18 +290,34 @@ async def run_tick(
     failures: list[str] | None = None,
     start_offset: int | None = None,
 ) -> int:
-    """Process ready jobs for every tenant once; return the number of jobs handled.
+    """Process ready jobs once; return the number of jobs handled.
 
-    The tenant order rotates every tick and each tenant has a time budget, so no tenant is
-    always served last and a slow tenant cannot hold the pass for the others."""
-    global _tick_counter
-    async with factory() as session:
-        tenant_ids = sorted(await session.scalars(select(Organization.id)))
-    if start_offset is None:
-        start_offset = _tick_counter
-        _tick_counter += 1
+    Only tenants with work are visited, except on ticks that run proactive checks or schedule
+    syncs (interval-driven), which visit every tenant. The visit order rotates every tick and each
+    tenant has a time budget, so no tenant is always served last and a slow tenant cannot hold
+    the pass for the others."""
+    global _last_start
+    if run_proactive or schedule_syncs:
+        async with factory() as session:
+            tenant_ids = sorted(await session.scalars(select(Organization.id)))
+    else:
+        tenant_ids = sorted(await tenants_with_work(factory, utc_now()))
     if tenant_ids:
-        pivot = start_offset % len(tenant_ids)
+        if start_offset is not None:
+            pivot = start_offset % len(tenant_ids)
+        else:
+            # Start after the tenant that went first last time, so rotation stays fair even
+            # though the set of busy tenants changes from tick to tick.
+            pivot = next(
+                (
+                    index
+                    for index, name in enumerate(tenant_ids)
+                    if _last_start is None or name > _last_start
+                ),
+                0,
+            )
+        if start_offset is None:
+            _last_start = tenant_ids[pivot]
         tenant_ids = tenant_ids[pivot:] + tenant_ids[:pivot]
     handled = 0
     for tenant_id in tenant_ids:

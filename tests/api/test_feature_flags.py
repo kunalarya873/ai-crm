@@ -343,6 +343,12 @@ async def test_job_claimed_before_the_switch_flipped_is_retried_not_dead_lettere
     monkeypatch.setattr(settings, "worker_batch_size", 1)  # zero backoff would re-claim
     await put_flag(client, "connectors", False)
 
+    async def discovered_before_the_flip(factory, now):
+        return {"tenant-a"}
+
+    # Discovery also skips switched-off tenants now, so pin it to the moment before the flip.
+    monkeypatch.setattr("ai_crm.work.runner.tenants_with_work", discovered_before_the_flip)
+
     await run_tick(session_factory)
     async with session_factory() as session:
         job = await session.get_one(DurableJob, job_id)
