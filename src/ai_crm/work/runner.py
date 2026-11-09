@@ -282,6 +282,67 @@ async def tenants_with_work(factory: async_sessionmaker[AsyncSession], now: date
         return set(job_tenants) | set(run_tenants)
 
 
+def _rotated(tenant_ids: list[str], start_offset: int | None) -> list[str]:
+    """Order tenants for this tick. With no explicit offset, start after the tenant that went
+    first last time, so rotation stays fair even though the busy set changes between ticks."""
+    global _last_start
+    if not tenant_ids:
+        return tenant_ids
+    if start_offset is not None:
+        pivot = start_offset % len(tenant_ids)
+    else:
+        pivot = next(
+            (
+                index
+                for index, name in enumerate(tenant_ids)
+                if _last_start is None or name > _last_start
+            ),
+            0,
+        )
+        _last_start = tenant_ids[pivot]
+    return tenant_ids[pivot:] + tenant_ids[:pivot]
+
+
+async def _visit_tenant(
+    factory: async_sessionmaker[AsyncSession],
+    tenant_id: str,
+    *,
+    run_proactive: bool,
+    schedule_syncs: bool,
+    failures: list[str] | None,
+) -> int:
+    """One tenant's pass: reconcile, optionally schedule syncs, run up to a batch of jobs within
+    the time budget, sweep overdue agent runs, optionally run proactive checks. A failure is
+    logged and recorded, never raised, and jobs already handled still count."""
+    handled = 0
+    try:
+        async with factory() as session:
+            await reconcile_expired_jobs(session, _context(tenant_id, _CONTROL))
+        if schedule_syncs:
+            await enqueue_scheduled_syncs(factory, tenant_id, utc_now())
+        started = time.monotonic()
+        for _ in range(settings.worker_batch_size):
+            if not await _run_one(factory, tenant_id):
+                break
+            handled += 1
+            if time.monotonic() - started >= settings.worker_tenant_time_budget_seconds:
+                logger.debug("tenant %s used its time budget this tick", tenant_id)
+                break
+        async with factory() as session:
+            await expire_overdue_runs(session, _context(tenant_id, frozenset()))
+        if run_proactive:
+            async with factory() as session:
+                await run_proactive_checks(
+                    session,
+                    _context(tenant_id, frozenset({Permission.OBSERVABILITY_MANAGE})),
+                )
+    except Exception:
+        logger.exception("worker tick failed for tenant %s", tenant_id)
+        if failures is not None:
+            failures.append(tenant_id)
+    return handled
+
+
 async def run_tick(
     factory: async_sessionmaker[AsyncSession],
     *,
@@ -296,57 +357,25 @@ async def run_tick(
     syncs (interval-driven), which visit every tenant. The visit order rotates every tick and each
     tenant has a time budget, so no tenant is always served last and a slow tenant cannot hold
     the pass for the others."""
-    global _last_start
     if run_proactive or schedule_syncs:
         async with factory() as session:
             tenant_ids = sorted(await session.scalars(select(Organization.id)))
     else:
         tenant_ids = sorted(await tenants_with_work(factory, utc_now()))
-    if tenant_ids:
-        if start_offset is not None:
-            pivot = start_offset % len(tenant_ids)
-        else:
-            # Start after the tenant that went first last time, so rotation stays fair even
-            # though the set of busy tenants changes from tick to tick.
-            pivot = next(
-                (
-                    index
-                    for index, name in enumerate(tenant_ids)
-                    if _last_start is None or name > _last_start
-                ),
-                0,
-            )
-        if start_offset is None:
-            _last_start = tenant_ids[pivot]
-        tenant_ids = tenant_ids[pivot:] + tenant_ids[:pivot]
     handled = 0
-    for tenant_id in tenant_ids:
-        try:
-            async with factory() as session:
-                await reconcile_expired_jobs(session, _context(tenant_id, _CONTROL))
-            if schedule_syncs:
-                await enqueue_scheduled_syncs(factory, tenant_id, utc_now())
-            started = time.monotonic()
-            for _ in range(settings.worker_batch_size):
-                if not await _run_one(factory, tenant_id):
-                    break
-                handled += 1
-                if time.monotonic() - started >= settings.worker_tenant_time_budget_seconds:
-                    logger.debug("tenant %s used its time budget this tick", tenant_id)
-                    break
-            async with factory() as session:
-                await expire_overdue_runs(session, _context(tenant_id, frozenset()))
-            if run_proactive:
-                async with factory() as session:
-                    await run_proactive_checks(
-                        session,
-                        _context(tenant_id, frozenset({Permission.OBSERVABILITY_MANAGE})),
-                    )
-        except Exception:
-            logger.exception("worker tick failed for tenant %s", tenant_id)
-            if failures is not None:
-                failures.append(tenant_id)
+    for tenant_id in _rotated(tenant_ids, start_offset):
+        handled += await _visit_tenant(
+            factory,
+            tenant_id,
+            run_proactive=run_proactive,
+            schedule_syncs=schedule_syncs,
+            failures=failures,
+        )
     return handled
+
+
+def _elapsed(last: datetime | None, now: datetime, seconds: float) -> bool:
+    return last is None or (now - last).total_seconds() >= seconds
 
 
 async def run_forever(
@@ -356,15 +385,8 @@ async def run_forever(
     last_sync_schedule: datetime | None = None
     while not stop_event.is_set():
         now = utc_now()
-        due = (
-            last_proactive is None
-            or (now - last_proactive).total_seconds() >= settings.proactive_check_interval_seconds
-        )
-        sync_due = (
-            last_sync_schedule is None
-            or (now - last_sync_schedule).total_seconds()
-            >= settings.integration_sync_interval_seconds
-        )
+        due = _elapsed(last_proactive, now, settings.proactive_check_interval_seconds)
+        sync_due = _elapsed(last_sync_schedule, now, settings.integration_sync_interval_seconds)
         failures: list[str] = []
         try:
             await run_tick(
