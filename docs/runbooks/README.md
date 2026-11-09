@@ -20,8 +20,11 @@ Start with the signal:
 Schema changes and rollbacks follow [../migrations.md](../migrations.md).
 
 Read the current SLOs with `GET /observability/slos` (owner is `SLO_OWNER`). The three API SLOs
-(availability, latency, error rate) report `not_measured`: there is no per-request telemetry yet,
-so use your load balancer or APM for those.
+(availability, p95 latency, 5xx error rate) come from per-minute request counts the app records in
+memory and flushes to `request_metric_buckets` every `REQUEST_METRICS_FLUSH_SECONDS`; with no
+traffic in the window they report `no_data`. They measure time inside the app only (not the load
+balancer or network), p95 is the upper bound of its histogram bucket, and kill-switch 503s are not
+counted as errors.
 
 Every procedure ends the same way: write down what you saw, what you changed, and the audit or
 trace ids (`GET /observability/events?trace_id=<32-hex>` follows one request across the API and

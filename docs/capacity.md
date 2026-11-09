@@ -127,6 +127,24 @@ an in-process call. Knowledge search is the clearest case: it issues several que
 and is about four times slower at the median. That makes the number of statements per request, not
 only per write, the next thing to look at on PostgreSQL. Run-to-run spread was still large.
 
+## Request telemetry overhead (10J)
+
+The middleware now counts every request in memory (`REQUEST_METRICS_ENABLED`). `standard`
+profile, SQLite default mode, two runs with it on and two off, laptop, in-process harness (the
+background flush task is not running in the harness, so this measures the middleware only):
+
+| Operation | p50 on (ms) | p50 off (ms) |
+|---|---|---|
+| contacts.list | 10.9 / 10.1 | 10.5 / 12.8 |
+| contacts.create | 28.5 / 26.6 | 27.7 / 38.5 |
+| jobs.enqueue | 29.4 / 32.3 | 33.7 / 38.4 |
+
+Medians sit inside the run-to-run spread (the off runs were not faster), so no cost can be
+distinguished from noise at this scale; tails varied by 2 to 3 times between identical runs, as
+before. The flush writes one row per (minute, tenant, route, method, status class) every 30
+seconds, which is a handful of rows per tick under this load; its cost on a busy multi-process
+deployment is not measured.
+
 ## Capacity assumptions
 
 | Dimension | Status |

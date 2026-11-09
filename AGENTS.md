@@ -66,9 +66,9 @@ src/ai_crm/
                      handlers.py = job-type allowlist, runner.py = opt-in in-process worker (WORKER_ENABLED; rotating tenant order, per-tenant time budget; tenants_with_work() discovery so idle tenants are not visited); breaker.py = in-process connector circuit breaker; create_job sheds with 429 at MAX_QUEUED_JOBS_PER_TENANT
   ai/                Gateway, provider adapters (fixture), JSON prompt catalog, typed use cases
   actions/           Typed action registry, proposals, approval, execution, reconciliation
-  observability/     Operational events, metrics, proactive checks, alerts, telemetry redaction; slo.py = SLO definitions (owner from SLO_OWNER) and on-demand evaluation
+  observability/     Operational events, metrics, proactive checks, alerts, telemetry redaction; slo/ = SLO definitions (owner from SLO_OWNER) and on-demand evaluation; requests/ = in-memory per-minute request recorder + flush task feeding the API SLOs (table request_metric_buckets, Phase 10J)
   agents/            Phase 9A/9B (eval/ = scripted replayable scenarios, admin-only, assumptions labelled): agent registry, runs/steps, bounded delegation, human escalation (no model loop; the run owner submits steps; agents only propose, never approve/execute)
-alembic/versions/    0001…0016, linear chain; tests/test_migrations.py enforces one head, round-trip and model/migration parity
+alembic/versions/    0001…0017, linear chain; tests/test_migrations.py enforces one head, round-trip and model/migration parity
 .github/workflows/ci.yml  ruff + pytest + pyright + Alembic round-trip (not yet run on GitHub)
 scripts/loadtest.py  local load harness (in-process, SQLite); docs/capacity.md has the recorded run and findings
 docs/migrations.md   expand/contract policy, deploy order, rollback
