@@ -38,10 +38,12 @@ TOKEN=$(uv run python -c 'from ai_crm.auth import create_access_token; print(cre
 
 ## 3. Repository map
 
+**File size rule:** no `.py` file under `src/` is longer than 150 lines (`find src -name '*.py' | xargs wc -l | sort -rn | head`). Large modules are packages: `X/__init__.py` re-exports every public name from small submodules (`from .part import *`), so import paths such as `ai_crm.services`, `ai_crm.models`, `ai_crm.schemas`, `ai_crm.integrations`, `ai_crm.actions.service`, `ai_crm.agents.runs`, `ai_crm.work.jobs`, `ai_crm.flags` are unchanged. Router packages (`api/*_routes/`) share one `router` defined in `base.py`; keep `__init__` import order (it is the route order). The names tests monkeypatch stay in thin modules and are passed to the code in sub-packages: `work/runner.py` (breaker, `create_job`, `disabled_flags`, `tenants_with_work`; helpers in `work/tick/`) and `api/ai_routes.py` (`service`, read per call by `api/ai_endpoints/`). The paths below name the package or module; open the directory for the parts.
+
 ```
 src/ai_crm/
-  main.py            App factory, router mounting, correlation-ID middleware, security headers,
-                     DomainError -> HTTP mapping (the single place status codes are decided)
+  main.py            App factory, lifespan, router mounting; middleware.py = correlation-ID middleware + security headers; error_handlers.py = DomainError -> HTTP mapping
+                     (the single place status codes are decided; handlers registered in main.py)
   config.py          Settings (pydantic-settings; env/.env). Every new knob is added here AND in .env.example
   db.py              Async engine/session, create_tables, seed_local_identity, configure_sqlite (busy_timeout; opt-in WAL via SQLITE_WAL)
   models.py          All SQLAlchemy models (single Base)
@@ -85,7 +87,7 @@ These are enforced by existing code and tests. Follow the pattern of the nearest
 - **Routers are thin.** Validate input (Pydantic), resolve `RequestContext`, call a service, return a schema. No business rules in `api/`.
 - **Business rules live in services/domain modules** (`services.py`, `*/service.py`, `work/*.py`, …). State machines are tables in `domain.py` / `*/domain.py`.
 - **Provider SDKs stay behind adapters** (`integrations.py`, `ai/providers.py`). Nothing outside an adapter imports a vendor SDK.
-- Raise `DomainError` subclasses (`NotFoundError`, `ConflictError`, `VersionConflictError`, `PreconditionRequiredError`, `InvalidRequestError`, `InvalidTransitionError`); `main.py` maps them to 404/409/428/422. Add a new subclass + mapping there rather than raising `HTTPException` from services.
+- Raise `DomainError` subclasses (`NotFoundError`, `ConflictError`, `VersionConflictError`, `PreconditionRequiredError`, `InvalidRequestError`, `InvalidTransitionError`); `error_handlers.py` (registered in `main.py`) maps them to 404/409/428/422. Add a new subclass + mapping there rather than raising `HTTPException` from services.
 
 ### Tenant isolation and permissions
 - Every tenant-owned table has `tenant_id`; **every query filters by it**. Cross-tenant references (e.g., a contact in tenant A linked to a company in tenant B) must be rejected, and there must be a test.
@@ -108,7 +110,7 @@ These are enforced by existing code and tests. Follow the pattern of the nearest
 - Never log or return secrets. Use opaque `secret_ref` values; route anything telemetry-bound through `redact_telemetry`.
 - Webhooks: verify signature, enforce max age, deduplicate (replay protection) before enqueueing.
 - External calls need timeouts and bounded retries with backoff.
-- Do not weaken the correlation-ID middleware or security headers in `main.py`.
+- Do not weaken the correlation-ID middleware or security headers in `middleware.py`.
 
 ## 5. Database and migrations
 

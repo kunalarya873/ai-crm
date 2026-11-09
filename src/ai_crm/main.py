@@ -1,11 +1,8 @@
 import asyncio
-import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
-from uuid import UUID, uuid4
 
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI
 from sqlalchemy.exc import SQLAlchemyError
 
 from .api.action_routes import router as action_router
@@ -21,19 +18,10 @@ from .api.work_routes import router as work_router
 from .config import settings
 from .db import SessionFactory, close_database, create_tables, seed_local_identity
 from .domain import (
-    BackpressureError,
-    CapabilityDisabledError,
-    ConflictError,
     DomainError,
-    InvalidRequestError,
-    InvalidTransitionError,
-    NotFoundError,
-    PermissionDeniedError,
-    PreconditionRequiredError,
-    SeparationOfDutiesError,
-    VersionConflictError,
 )
-from .integrations import WebhookSignatureError
+from .error_handlers import database_error_handler, domain_error_handler
+from .middleware import correlation_id_middleware, parse_traceparent  # noqa: F401
 from .work.runner import run_forever
 
 
@@ -59,8 +47,6 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     await close_database()
 
 
-BACKPRESSURE_RETRY_AFTER_SECONDS = 30
-
 app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
@@ -79,90 +65,6 @@ app.include_router(agent_router, prefix=settings.api_v1_prefix)
 app.include_router(agent_eval_router, prefix=settings.api_v1_prefix)
 
 
-_TRACEPARENT = re.compile(r"^00-([0-9a-f]{32})-([0-9a-f]{16})-[0-9a-f]{2}$")
-
-
-def parse_traceparent(value: str | None) -> str | None:
-    """Return the W3C trace id, or None so a fresh trace starts (invalid headers are ignored)."""
-    match = _TRACEPARENT.match(value.strip().lower()) if value else None
-    if match is None or set(match.group(1)) == {"0"} or set(match.group(2)) == {"0"}:
-        return None
-    return match.group(1)
-
-
-@app.middleware("http")
-async def correlation_id_middleware(request: Request, call_next):
-    supplied_id = request.headers.get("X-Correlation-ID")
-    correlation_id = supplied_id or str(uuid4())
-    try:
-        UUID(correlation_id)
-    except ValueError:
-        return JSONResponse(
-            status_code=400,
-            content={"detail": "X-Correlation-ID must be a valid UUID"},
-        )
-
-    request.state.correlation_id = correlation_id
-    trace_id = parse_traceparent(request.headers.get("traceparent")) or uuid4().hex
-    request.state.trace_id = trace_id
-    response = await call_next(request)
-    response.headers["X-Correlation-ID"] = correlation_id
-    response.headers["traceparent"] = f"00-{trace_id}-{uuid4().hex[:16]}-01"
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
-    response.headers["Referrer-Policy"] = "no-referrer"
-    return response
-
-
-@app.exception_handler(SQLAlchemyError)
-async def database_error_handler(request: Request, _: SQLAlchemyError) -> JSONResponse:
-    correlation_id = getattr(request.state, "correlation_id", None)
-    response = JSONResponse(
-        status_code=503,
-        content={
-            "detail": "Database operation failed",
-            "correlation_id": correlation_id,
-        },
-    )
-    if correlation_id:
-        response.headers["X-Correlation-ID"] = correlation_id
-    return response
-
-
-@app.exception_handler(DomainError)
-async def domain_error_handler(request: Request, error: DomainError) -> JSONResponse:
-    status_code = 422
-    code = "domain_error"
-    if isinstance(error, NotFoundError):
-        status_code, code = 404, "not_found"
-    elif isinstance(error, PreconditionRequiredError):
-        status_code, code = 428, "precondition_required"
-    elif isinstance(error, VersionConflictError):
-        status_code, code = 409, "record_version_conflict"
-    elif isinstance(error, ConflictError):
-        status_code, code = 409, "conflict"
-    elif isinstance(error, InvalidTransitionError):
-        status_code, code = 409, "invalid_transition"
-    elif isinstance(error, CapabilityDisabledError):
-        status_code, code = 503, "capability_disabled"
-    elif isinstance(error, BackpressureError):
-        status_code, code = 429, "backpressure"
-    elif isinstance(error, PermissionDeniedError):
-        status_code, code = 403, "permission_denied"
-    elif isinstance(error, SeparationOfDutiesError):
-        status_code, code = 403, "separation_of_duties"
-    elif isinstance(error, InvalidRequestError):
-        status_code, code = 422, "invalid_request"
-    elif isinstance(error, WebhookSignatureError):
-        status_code, code = 401, "invalid_webhook_signature"
-
-    correlation_id = getattr(request.state, "correlation_id", None)
-    response = JSONResponse(
-        status_code=status_code,
-        content={"code": code, "detail": str(error), "correlation_id": correlation_id},
-    )
-    if isinstance(error, BackpressureError):
-        response.headers["Retry-After"] = str(BACKPRESSURE_RETRY_AFTER_SECONDS)
-    if correlation_id:
-        response.headers["X-Correlation-ID"] = correlation_id
-    return response
+app.middleware("http")(correlation_id_middleware)
+app.exception_handler(SQLAlchemyError)(database_error_handler)
+app.exception_handler(DomainError)(domain_error_handler)

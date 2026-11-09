@@ -33,7 +33,7 @@ The import above is the full shared project guide (architecture, commands, rules
 - **Don't "fix" tests by loosening assertions** (especially permission, tenant-isolation, or idempotency tests). If a test fails, find the cause in the code under test.
 - **Don't add backwards-compat shims, speculative abstractions, or extra config** beyond the task. This codebase prefers explicit, narrow modules.
 - **Model change ⇒ migration.** Tests use `create_all`, so green tests don't prove the migration exists. Always add the revision and run upgrade/downgrade.
-- **Don't write `HTTPException` in services**; raise `DomainError` subclasses and let `main.py` map them.
+- **Don't write `HTTPException` in services**; raise `DomainError` subclasses and let `error_handlers.py` map them.
 - **Don't summarise success you didn't verify.** If pyright or the migration round-trip wasn't run, say so.
 - Keep comments rare and only for non-obvious *why*; match the surrounding terse style (the code has few comments and short docstrings).
 
